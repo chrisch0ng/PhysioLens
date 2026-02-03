@@ -54,17 +54,12 @@ interface UsePoseDetectorOptions {
   showSkeleton?: boolean;
 }
 
-// Aggressive throttling - 5fps max
-const FRAME_INTERVAL = 200; // 200ms = 5fps
-const SKIP_FRAMES = 2; // Process every 3rd frame
-
 export function usePoseDetector({ onResults, enabled = true, showSkeleton = true }: UsePoseDetectorOptions = {}) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const poseRef = useRef<PoseSolution | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const rafRef = useRef<number | null>(null);
-  const frameCountRef = useRef(0);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -82,7 +77,7 @@ export function usePoseDetector({ onResults, enabled = true, showSkeleton = true
       script.crossOrigin = 'anonymous';
       script.async = true;
       script.onload = () => resolve();
-      script.onerror = () => reject(new Error(`Failed: ${src}`));
+      script.onerror = () => reject(new Error('Failed'));
       document.head.appendChild(script);
     });
 
@@ -102,10 +97,9 @@ export function usePoseDetector({ onResults, enabled = true, showSkeleton = true
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`,
       });
 
-      // Ultra-light settings
       pose.setOptions({
         modelComplexity: 0,
-        smoothLandmarks: false, // Disable smoothing - causes lag
+        smoothLandmarks: false,
         enableSegmentation: false,
         smoothSegmentation: false,
         minDetectionConfidence: 0.3,
@@ -121,17 +115,14 @@ export function usePoseDetector({ onResults, enabled = true, showSkeleton = true
         
         if (!ctx || video.readyState < 2) return;
 
-        // Resize once
         if (canvas.width !== video.videoWidth) {
           canvas.width = video.videoWidth || 640;
           canvas.height = video.videoHeight || 480;
         }
 
-        // Clear and draw video
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        // Draw skeleton (only if enabled)
         if (showSkeleton && results.poseLandmarks && window.drawConnectors) {
           window.drawConnectors(ctx, results.poseLandmarks, window.POSE_CONNECTIONS, {
             color: '#14b8a6', lineWidth: 2,
@@ -151,23 +142,35 @@ export function usePoseDetector({ onResults, enabled = true, showSkeleton = true
     }
 
     return () => poseRef.current?.close();
-  }, [enabled, scriptsLoaded, onResults]);
+  }, [enabled, scriptsLoaded, onResults, showSkeleton]);
 
-  // Start camera
+  // Start camera using setInterval instead of RAF for simpler control
   const startCamera = useCallback(async () => {
-    if (!videoRef.current || !poseRef.current) return;
+    console.log('[startCamera] Called');
+    
+    if (!videoRef.current || !poseRef.current) {
+      console.log('[startCamera] Missing refs:', { video: !!videoRef.current, pose: !!poseRef.current });
+      setError('Not ready');
+      return;
+    }
 
     try {
       setIsLoading(true);
+      setError(null);
 
       // Stop existing
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(t => t.stop());
       }
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
 
-      // Low-res camera
+      // Get camera
+      console.log('[startCamera] Getting user media...');
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480, frameRate: { max: 10 } },
+        video: { width: 640, height: 480, frameRate: { max: 15 } },
         audio: false
       });
 
@@ -175,60 +178,74 @@ export function usePoseDetector({ onResults, enabled = true, showSkeleton = true
       const video = videoRef.current;
       video.srcObject = stream;
 
-      // Wait for ready
-      await new Promise<void>((resolve) => {
+      console.log('[startCamera] Waiting for video...');
+      
+      // Wait for video to be ready
+      await new Promise<void>((resolve, reject) => {
+        let attempts = 0;
         const check = () => {
-          if (video.readyState >= 2 && video.videoWidth > 0) resolve();
-          else setTimeout(check, 50);
+          attempts++;
+          if (video.readyState >= 2 && video.videoWidth > 0) {
+            console.log('[startCamera] Video ready:', video.videoWidth, 'x', video.videoHeight);
+            resolve();
+          } else if (attempts > 50) {
+            reject(new Error('Video timeout'));
+          } else {
+            setTimeout(check, 100);
+          }
         };
         check();
       });
 
-      await video.play().catch(() => {});
+      // Try to play
+      video.play().catch(e => console.log('Play warning:', e));
 
-      // Processing loop with frame skipping
-      let lastTime = 0;
-      const loop = async (time: number) => {
+      // Start processing at 10fps
+      console.log('[startCamera] Starting interval...');
+      intervalRef.current = setInterval(async () => {
         if (!videoRef.current || !poseRef.current) return;
-        
-        // Throttle by time
-        if (time - lastTime < FRAME_INTERVAL) {
-          rafRef.current = requestAnimationFrame(loop);
-          return;
+        const v = videoRef.current;
+        if (v.readyState >= 2 && !v.paused) {
+          try {
+            await poseRef.current.send({ image: v });
+          } catch (e) {}
         }
-        lastTime = time;
-        
-        // Skip frames
-        frameCountRef.current++;
-        if (frameCountRef.current % (SKIP_FRAMES + 1) !== 0) {
-          rafRef.current = requestAnimationFrame(loop);
-          return;
-        }
+      }, 100);
 
-        const video = videoRef.current;
-        if (video.readyState >= 2 && !video.paused) {
-          await poseRef.current.send({ image: video }).catch(() => {});
-        }
-
-        rafRef.current = requestAnimationFrame(loop);
-      };
-
-      rafRef.current = requestAnimationFrame(loop);
       setIsLoading(false);
-      setDebug('5fps mode');
+      setDebug('10fps');
+      console.log('[startCamera] Camera active');
 
     } catch (err: any) {
-      setError(err.name === 'NotAllowedError' ? 'Denied' : 'Failed');
+      console.error('[startCamera] Error:', err);
       setIsLoading(false);
+      let msg = 'Camera failed';
+      if (err.name === 'NotAllowedError') msg = 'Permission denied';
+      else if (err.name === 'NotFoundError') msg = 'No camera found';
+      else if (err.message) msg = err.message;
+      setError(msg);
     }
   }, []);
 
   // Stop
   const stopCamera = useCallback(() => {
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    streamRef.current?.getTracks().forEach(t => t.stop());
-    if (videoRef.current) videoRef.current.srcObject = null;
-    frameCountRef.current = 0;
+    console.log('[stopCamera] Called');
+    
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+    
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    
+    setIsLoading(false);
   }, []);
 
   return { videoRef, canvasRef, isInitialized, isLoading, error, debug, startCamera, stopCamera };
