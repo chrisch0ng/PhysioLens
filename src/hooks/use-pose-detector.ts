@@ -54,6 +54,9 @@ interface UsePoseDetectorOptions {
   enabled?: boolean;
 }
 
+// Throttle to 10fps for better performance
+const FRAME_INTERVAL = 100; // ms
+
 export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOptions = {}) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -61,6 +64,7 @@ export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOp
   const streamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const isRunningRef = useRef(false);
+  const lastFrameTimeRef = useRef(0);
   const [isInitialized, setIsInitialized] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -105,7 +109,7 @@ export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOp
     loadMediaPipe();
   }, [enabled]);
 
-  // Initialize MediaPipe Pose
+  // Initialize MediaPipe Pose with performance settings
   useEffect(() => {
     if (!enabled || !scriptsLoaded || !window.Pose) return;
 
@@ -114,13 +118,14 @@ export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOp
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`,
       });
 
+      // Use lightest model for best performance
       pose.setOptions({
-        modelComplexity: 0, // Use lighter model for faster init
+        modelComplexity: 0, // 0 = lite, 1 = full, 2 = heavy
         smoothLandmarks: true,
         enableSegmentation: false,
         smoothSegmentation: false,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5,
+        minDetectionConfidence: 0.3, // Lower threshold = faster
+        minTrackingConfidence: 0.3,
       });
 
       pose.onResults((results) => {
@@ -131,6 +136,7 @@ export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOp
           const video = videoRef.current;
           
           if (ctx && video.readyState >= 2) {
+            // Only resize if needed
             if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
               canvas.width = video.videoWidth || 640;
               canvas.height = video.videoHeight || 480;
@@ -139,19 +145,21 @@ export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOp
             ctx.save();
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             
+            // Draw video frame
             try {
               ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             } catch (e) {}
 
+            // Draw skeleton if landmarks exist
             if (results.poseLandmarks && window.drawConnectors && window.drawLandmarks) {
               window.drawConnectors(ctx, results.poseLandmarks, window.POSE_CONNECTIONS, {
                 color: '#14b8a6',
-                lineWidth: 3,
+                lineWidth: 2, // Thinner lines
               });
               window.drawLandmarks(ctx, results.poseLandmarks, {
                 color: '#0d9488',
-                lineWidth: 2,
-                radius: 5,
+                lineWidth: 1,
+                radius: 3, // Smaller dots
               });
             }
             ctx.restore();
@@ -170,30 +178,33 @@ export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOp
     return () => poseRef.current?.close();
   }, [enabled, scriptsLoaded, onResults]);
 
-  // Start camera
+  // Start camera with throttled processing
   const startCamera = useCallback(async () => {
     if (!videoRef.current || !poseRef.current) {
       setError('Not ready');
       return;
     }
 
-    if (isRunningRef.current) {
-      return; // Already running
-    }
+    if (isRunningRef.current) return;
 
     try {
       setIsLoading(true);
       setError(null);
       isRunningRef.current = true;
 
-      // Stop any existing stream
+      // Stop existing
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
 
-      // Get camera
+      // Get camera with lower resolution for performance
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480, facingMode: 'user' },
+        video: { 
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          frameRate: { ideal: 15, max: 30 }, // Limit framerate
+          facingMode: 'user' 
+        },
         audio: false
       });
 
@@ -201,7 +212,7 @@ export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOp
       const video = videoRef.current;
       video.srcObject = stream;
 
-      // Simple timeout-based wait for video
+      // Wait for video with timeout
       let attempts = 0;
       const waitForVideo = () => {
         return new Promise<void>((resolve, reject) => {
@@ -209,10 +220,10 @@ export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOp
             attempts++;
             if (video.readyState >= 2 && video.videoWidth > 0) {
               resolve();
-            } else if (attempts > 50) { // 5 second timeout
-              reject(new Error('Video timeout'));
+            } else if (attempts > 100) {
+              reject(new Error('Timeout'));
             } else {
-              setTimeout(check, 100);
+              setTimeout(check, 50);
             }
           };
           check();
@@ -221,16 +232,18 @@ export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOp
 
       await waitForVideo();
       
-      // Try to play
-      try {
-        await video.play();
-      } catch (e) {
-        console.log('Play warning:', e);
-      }
+      try { await video.play(); } catch (e) {}
 
-      // Start processing loop
-      const processFrame = async () => {
+      // Throttled processing loop
+      const processFrame = async (timestamp: number) => {
         if (!isRunningRef.current || !videoRef.current || !poseRef.current) return;
+        
+        // Throttle to 10fps
+        if (timestamp - lastFrameTimeRef.current < FRAME_INTERVAL) {
+          animationFrameRef.current = requestAnimationFrame(processFrame);
+          return;
+        }
+        lastFrameTimeRef.current = timestamp;
         
         const video = videoRef.current;
         if (video.readyState >= 2 && !video.paused) {
@@ -246,13 +259,13 @@ export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOp
 
       animationFrameRef.current = requestAnimationFrame(processFrame);
       setIsLoading(false);
-      setDebug('Camera active');
+      setDebug('Camera active (10fps)');
 
     } catch (err: any) {
       isRunningRef.current = false;
       let errorMsg = 'Camera failed';
       if (err.name === 'NotAllowedError') errorMsg = 'Permission denied';
-      else if (err.name === 'NotFoundError') errorMsg = 'No camera found';
+      else if (err.name === 'NotFoundError') errorMsg = 'No camera';
       setError(errorMsg);
       setIsLoading(false);
     }
@@ -275,6 +288,8 @@ export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOp
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
+    
+    lastFrameTimeRef.current = 0;
   }, []);
 
   return {
