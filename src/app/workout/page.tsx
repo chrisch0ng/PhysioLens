@@ -228,15 +228,17 @@ function WorkoutContent() {
                       }}
                     />
                     
-                    {/* Canvas overlay for pose detection - drawn on top */}
-                    <canvas
-                      ref={canvasRef}
-                      className="absolute inset-0 w-full h-full pointer-events-none"
-                      style={{ 
-                        transform: 'scaleX(-1)',
-                        opacity: isInitialized ? 1 : 0
-                      }}
-                    />
+                    {/* Canvas overlay for pose detection - only when skeleton enabled */}
+                    {showSkeleton && (
+                      <canvas
+                        ref={canvasRef}
+                        className="absolute inset-0 w-full h-full pointer-events-none"
+                        style={{ 
+                          transform: 'scaleX(-1)',
+                          opacity: isInitialized ? 1 : 0
+                        }}
+                      />
+                    )}
                     {/* Single overlay that handles all states */}
                     {!isCameraActive ? (
                       isInitialized ? (
