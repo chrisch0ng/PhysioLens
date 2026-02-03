@@ -60,15 +60,15 @@ export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOp
   const poseRef = useRef<PoseSolution | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const isRunningRef = useRef(false);
   const [isInitialized, setIsInitialized] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [scriptsLoaded, setScriptsLoaded] = useState(false);
   const [debug, setDebug] = useState<string>('');
 
-  // Load MediaPipe scripts immediately on mount
+  // Load MediaPipe scripts
   useEffect(() => {
-    console.log('[PoseDetector] Starting script load, enabled:', enabled);
     if (!enabled) return;
 
     const loadScript = (src: string): Promise<void> => {
@@ -81,10 +81,7 @@ export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOp
         script.src = src;
         script.crossOrigin = 'anonymous';
         script.async = true;
-        script.onload = () => {
-          console.log(`[PoseDetector] Loaded: ${src}`);
-          resolve();
-        };
+        script.onload = () => resolve();
         script.onerror = () => reject(new Error(`Failed to load ${src}`));
         document.head.appendChild(script);
       });
@@ -93,22 +90,13 @@ export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOp
     const loadMediaPipe = async () => {
       try {
         setIsLoading(true);
-        setDebug('Loading MediaPipe...');
-        
         await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js');
         await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js');
-        
-        // Wait for scripts to initialize
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        console.log('[PoseDetector] Scripts loaded, Pose available:', !!window.Pose);
+        await new Promise(resolve => setTimeout(resolve, 500));
         setScriptsLoaded(true);
-        setDebug('MediaPipe loaded');
         setError(null);
       } catch (err) {
-        console.error('[PoseDetector] Failed to load scripts:', err);
-        setError('Failed to load MediaPipe libraries');
-        setDebug('Failed to load MediaPipe');
+        setError('Failed to load MediaPipe');
       } finally {
         setIsLoading(false);
       }
@@ -119,24 +107,15 @@ export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOp
 
   // Initialize MediaPipe Pose
   useEffect(() => {
-    if (!enabled || !scriptsLoaded || !window.Pose) {
-      console.log('[PoseDetector] Cannot init:', { enabled, scriptsLoaded, hasPose: !!window.Pose });
-      return;
-    }
+    if (!enabled || !scriptsLoaded || !window.Pose) return;
 
     try {
-      console.log('[PoseDetector] Initializing Pose...');
-      setDebug('Initializing pose detector...');
-      
       const pose = new window.Pose({
-        locateFile: (file) => {
-          console.log('[PoseDetector] Loading file:', file);
-          return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
-        },
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`,
       });
 
       pose.setOptions({
-        modelComplexity: 1,
+        modelComplexity: 0, // Use lighter model for faster init
         smoothLandmarks: true,
         enableSegmentation: false,
         smoothSegmentation: false,
@@ -145,16 +124,13 @@ export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOp
       });
 
       pose.onResults((results) => {
-        console.log('[PoseDetector] Got results:', { hasLandmarks: !!results.poseLandmarks });
-        
         // Draw on canvas
-        if (canvasRef.current && videoRef.current && window.drawConnectors && window.drawLandmarks) {
+        if (canvasRef.current && videoRef.current) {
           const canvas = canvasRef.current;
           const ctx = canvas.getContext('2d');
           const video = videoRef.current;
           
           if (ctx && video.readyState >= 2) {
-            // Set canvas size to match video
             if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
               canvas.width = video.videoWidth || 640;
               canvas.height = video.videoHeight || 480;
@@ -163,15 +139,11 @@ export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOp
             ctx.save();
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             
-            // Draw video frame
             try {
               ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            } catch (e) {
-              console.error('[PoseDetector] Draw error:', e);
-            }
+            } catch (e) {}
 
-            // Draw pose landmarks
-            if (results.poseLandmarks) {
+            if (results.poseLandmarks && window.drawConnectors && window.drawLandmarks) {
               window.drawConnectors(ctx, results.poseLandmarks, window.POSE_CONNECTIONS, {
                 color: '#14b8a6',
                 lineWidth: 3,
@@ -191,148 +163,104 @@ export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOp
 
       poseRef.current = pose;
       setIsInitialized(true);
-      setDebug('Pose detector ready');
-      console.log('[PoseDetector] Pose initialized');
-      
     } catch (err) {
-      console.error('[PoseDetector] Init error:', err);
-      setError('Failed to initialize pose detector');
-      setDebug('Init failed');
+      setError('Failed to initialize pose');
     }
 
-    return () => {
-      poseRef.current?.close();
-    };
+    return () => poseRef.current?.close();
   }, [enabled, scriptsLoaded, onResults]);
 
   // Start camera
   const startCamera = useCallback(async () => {
-    console.log('[PoseDetector] startCamera called');
-    setDebug('Requesting camera...');
-    
-    if (!videoRef.current) {
-      setError('Video element not ready');
-      setDebug('Video ref missing');
+    if (!videoRef.current || !poseRef.current) {
+      setError('Not ready');
       return;
     }
 
-    if (!poseRef.current) {
-      setError('Pose detector not ready');
-      setDebug('Pose ref missing');
-      return;
+    if (isRunningRef.current) {
+      return; // Already running
     }
 
     try {
       setIsLoading(true);
       setError(null);
+      isRunningRef.current = true;
 
       // Stop any existing stream
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
 
-      // Get camera stream
-      console.log('[PoseDetector] Getting user media...');
+      // Get camera
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-          facingMode: 'user'
-        },
+        video: { width: 640, height: 480, facingMode: 'user' },
         audio: false
       });
 
-      console.log('[PoseDetector] Got stream:', stream.id);
       streamRef.current = stream;
-      
       const video = videoRef.current;
       video.srcObject = stream;
-      
-      setDebug('Starting video...');
 
-      // Wait for video to be ready
-      await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error('Video load timeout'));
-        }, 10000);
-        
-        video.onloadedmetadata = () => {
-          console.log('[PoseDetector] Video metadata loaded:', video.videoWidth, 'x', video.videoHeight);
-          clearTimeout(timeout);
-          video.play().then(() => {
-            console.log('[PoseDetector] Video playing');
-            resolve();
-          }).catch(reject);
-        };
-        
-        video.onerror = (e) => {
-          clearTimeout(timeout);
-          reject(new Error('Video error: ' + e));
-        };
-      });
-
-      setDebug('Video playing, starting detection...');
-
-      // Start processing frames
-      let isProcessing = false;
-      const processFrame = async () => {
-        if (!videoRef.current || !poseRef.current) {
-          console.log('[PoseDetector] Stopping frame loop - refs gone');
-          return;
-        }
-        
-        if (isProcessing) {
-          animationFrameRef.current = requestAnimationFrame(processFrame);
-          return;
-        }
-        
-        const video = videoRef.current;
-        if (video.readyState < 2 || video.paused || video.ended) {
-          animationFrameRef.current = requestAnimationFrame(processFrame);
-          return;
-        }
-        
-        isProcessing = true;
-        
-        try {
-          await poseRef.current.send({ image: video });
-        } catch (err) {
-          console.error('[PoseDetector] Send error:', err);
-        } finally {
-          isProcessing = false;
-        }
-        
-        animationFrameRef.current = requestAnimationFrame(processFrame);
+      // Simple timeout-based wait for video
+      let attempts = 0;
+      const waitForVideo = () => {
+        return new Promise<void>((resolve, reject) => {
+          const check = () => {
+            attempts++;
+            if (video.readyState >= 2 && video.videoWidth > 0) {
+              resolve();
+            } else if (attempts > 50) { // 5 second timeout
+              reject(new Error('Video timeout'));
+            } else {
+              setTimeout(check, 100);
+            }
+          };
+          check();
+        });
       };
 
-      // Start the loop
+      await waitForVideo();
+      
+      // Try to play
+      try {
+        await video.play();
+      } catch (e) {
+        console.log('Play warning:', e);
+      }
+
+      // Start processing loop
+      const processFrame = async () => {
+        if (!isRunningRef.current || !videoRef.current || !poseRef.current) return;
+        
+        const video = videoRef.current;
+        if (video.readyState >= 2 && !video.paused) {
+          try {
+            await poseRef.current.send({ image: video });
+          } catch (e) {}
+        }
+        
+        if (isRunningRef.current) {
+          animationFrameRef.current = requestAnimationFrame(processFrame);
+        }
+      };
+
       animationFrameRef.current = requestAnimationFrame(processFrame);
       setIsLoading(false);
       setDebug('Camera active');
-      console.log('[PoseDetector] Camera started successfully');
 
     } catch (err: any) {
-      console.error('[PoseDetector] Camera error:', err);
-      let errorMsg = 'Failed to access camera';
-      let debugMsg = err.message || 'Unknown error';
-      
-      if (err.name === 'NotAllowedError') {
-        errorMsg = 'Camera permission denied. Please allow camera access.';
-      } else if (err.name === 'NotFoundError') {
-        errorMsg = 'No camera found. Please connect a camera.';
-      } else if (err.name === 'NotReadableError') {
-        errorMsg = 'Camera is already in use by another application.';
-      }
-      
+      isRunningRef.current = false;
+      let errorMsg = 'Camera failed';
+      if (err.name === 'NotAllowedError') errorMsg = 'Permission denied';
+      else if (err.name === 'NotFoundError') errorMsg = 'No camera found';
       setError(errorMsg);
-      setDebug(debugMsg);
       setIsLoading(false);
     }
   }, []);
 
   // Stop camera
   const stopCamera = useCallback(() => {
-    console.log('[PoseDetector] Stopping camera');
+    isRunningRef.current = false;
     
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
@@ -347,8 +275,6 @@ export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOp
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
-    
-    setDebug('Camera stopped');
   }, []);
 
   return {
@@ -365,11 +291,7 @@ export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOp
 
 export function extractLandmarks(results: PoseResults): Landmark[] {
   if (!results.poseLandmarks) return [];
-  
   return results.poseLandmarks.map((landmark) => ({
-    x: landmark.x,
-    y: landmark.y,
-    z: landmark.z,
-    visibility: landmark.visibility ?? 0,
+    x: landmark.x, y: landmark.y, z: landmark.z, visibility: landmark.visibility ?? 0,
   }));
 }
