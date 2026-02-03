@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, Suspense } from "react";
+import { useEffect, useState, useCallback, Suspense, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -40,6 +40,7 @@ function WorkoutContent() {
   const [analyzerState, setAnalyzerState] = useState<FormAnalyzerState>(createAnalyzerState());
   const [analysisResult, setAnalysisResult] = useState<FormAnalysisResult | null>(null);
   const [showSummary, setShowSummary] = useState(false);
+  const cameraStartedRef = useRef(false);
 
   const session = useSessionStore();
   const progress = useProgressStore();
@@ -109,19 +110,21 @@ function WorkoutContent() {
     if (isCameraActive) {
       stopCamera();
       setIsCameraActive(false);
+      cameraStartedRef.current = false; // Reset so it can be started again
     } else {
       setIsCameraActive(true);
       // Camera will start via useEffect below
     }
   };
 
-  // Auto-start camera when ready
+  // Auto-start camera when ready - only once
   useEffect(() => {
-    if (isCameraActive && isInitialized && !isCameraLoading && exercise?.hasAiDetection) {
+    if (isCameraActive && isInitialized && !isCameraLoading && exercise?.hasAiDetection && !cameraStartedRef.current) {
       console.log('[Workout] Auto-starting camera');
+      cameraStartedRef.current = true;
       startCamera();
     }
-  }, [isCameraActive, isInitialized, isCameraLoading, exercise, startCamera]);
+  }, [isCameraActive, isInitialized, isCameraLoading, exercise?.hasAiDetection]);
 
   const handleCompleteSet = () => {
     session.completeSet();
@@ -234,33 +237,36 @@ function WorkoutContent() {
                         opacity: isInitialized ? 1 : 0
                       }}
                     />
-                    {!isCameraActive && !isInitialized && (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-slate-900/90">
-                        <div className="w-12 h-12 border-4 border-teal-500 border-t-transparent rounded-full animate-spin mb-4" />
-                        <p className="text-lg font-medium mb-2">Loading AI...</p>
-                        <p className="text-sm opacity-70">Please wait while we initialize the pose detector</p>
-                      </div>
-                    )}
-                    
-                    {!isCameraActive && isInitialized && (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-slate-900/90">
-                        <Camera className="w-16 h-16 mb-4 opacity-50" />
-                        <p className="text-lg font-medium mb-2">Camera is off</p>
-                        <p className="text-sm opacity-70 mb-4">Enable camera for AI form detection</p>
-                        <Button onClick={handleToggleCamera} className="gradient-teal">
-                          <Camera className="w-4 h-4 mr-2" />
-                          Enable Camera
-                        </Button>
-                      </div>
-                    )}
-                    {isCameraLoading && (
+                    {/* Single overlay that handles all states */}
+                    {!isCameraActive ? (
+                      isInitialized ? (
+                        // Camera off, ready to start
+                        <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-slate-900/90">
+                          <Camera className="w-16 h-16 mb-4 opacity-50" />
+                          <p className="text-lg font-medium mb-2">Camera is off</p>
+                          <p className="text-sm opacity-70 mb-4">Enable camera for AI form detection</p>
+                          <Button onClick={handleToggleCamera} className="gradient-teal">
+                            <Camera className="w-4 h-4 mr-2" />
+                            Enable Camera
+                          </Button>
+                        </div>
+                      ) : (
+                        // Loading AI
+                        <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-slate-900/90">
+                          <div className="w-12 h-12 border-4 border-teal-500 border-t-transparent rounded-full animate-spin mb-4" />
+                          <p className="text-lg font-medium mb-2">Loading AI...</p>
+                          <p className="text-sm opacity-70">Please wait while we initialize</p>
+                        </div>
+                      )
+                    ) : isCameraLoading ? (
+                      // Camera starting
                       <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-slate-900/90">
                         <div className="w-12 h-12 border-4 border-teal-500 border-t-transparent rounded-full animate-spin mb-4" />
                         <p className="text-lg font-medium">Starting camera...</p>
-                        <p className="text-sm opacity-70">Please allow camera access when prompted</p>
+                        <p className="text-sm opacity-70">Please allow camera access</p>
                       </div>
-                    )}
-                    {error && (
+                    ) : error ? (
+                      // Error state
                       <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-slate-900/90 p-8 text-center">
                         <AlertCircle className="w-16 h-16 mb-4 text-red-500" />
                         <p className="text-lg font-medium text-red-400 mb-2">Camera Error</p>
@@ -274,7 +280,7 @@ function WorkoutContent() {
                           Try Again
                         </Button>
                       </div>
-                    )}
+                    ) : null}
                   </>
                 ) : (
                   <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-gradient-to-br from-sage-700 to-sage-900">
