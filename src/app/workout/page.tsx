@@ -44,7 +44,7 @@ function WorkoutContent() {
   const progress = useProgressStore();
   const timer = useWorkoutTimer();
 
-  const { videoRef, canvasRef, isInitialized, isLoading: isCameraLoading, error, startCamera, stopCamera } = usePoseDetector({
+  const { videoRef, canvasRef, isInitialized, isLoading: isCameraLoading, error, debug, startCamera, stopCamera } = usePoseDetector({
     enabled: isCameraActive && exercise?.hasAiDetection,
     onResults: useCallback((results: any) => {
       if (!exercise?.hasAiDetection) return;
@@ -201,16 +201,27 @@ function WorkoutContent() {
               <div className="relative aspect-video bg-slate-900">
                 {exercise.hasAiDetection ? (
                   <>
+                    {/* Video element - always visible when camera is on */}
                     <video
                       ref={videoRef}
                       className="absolute inset-0 w-full h-full object-cover"
                       playsInline
                       muted
                       autoPlay
+                      style={{ 
+                        transform: 'scaleX(-1)',
+                        backgroundColor: '#000'
+                      }}
                     />
+                    
+                    {/* Canvas overlay for pose detection - drawn on top */}
                     <canvas
                       ref={canvasRef}
-                      className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+                      className="absolute inset-0 w-full h-full pointer-events-none"
+                      style={{ 
+                        transform: 'scaleX(-1)',
+                        opacity: isInitialized ? 1 : 0
+                      }}
                     />
                     {!isCameraActive && (
                       <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-slate-900/90">
@@ -267,6 +278,13 @@ function WorkoutContent() {
                     <Badge className="bg-black/50 text-white border-0 capitalize">
                       Phase: {analysisResult.phase.replace(/_/g, ' ')}
                     </Badge>
+                  </div>
+                )}
+                
+                {/* Debug info */}
+                {process.env.NODE_ENV === 'development' && debug && (
+                  <div className="absolute top-4 left-4 bg-black/70 text-white text-xs p-2 rounded font-mospace max-w-[200px]">
+                    {debug}
                   </div>
                 )}
               </div>
