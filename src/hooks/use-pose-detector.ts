@@ -54,7 +54,7 @@ interface UsePoseDetectorOptions {
   showSkeleton?: boolean;
 }
 
-const PROCESS_INTERVAL = 100; // 10fps for pose detection
+const PROCESS_INTERVAL = 50; // 20fps for pose detection
 
 export function usePoseDetector({ onResults, enabled = true, showSkeleton = true }: UsePoseDetectorOptions = {}) {
   const videoRef = useRef<HTMLVideoElement>(null);
