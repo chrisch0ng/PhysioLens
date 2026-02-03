@@ -36,6 +36,7 @@ function WorkoutContent() {
 
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [audioEnabled, setAudioEnabled] = useState(true);
+  const [showSkeleton, setShowSkeleton] = useState(true);
   const [analyzerState, setAnalyzerState] = useState<FormAnalyzerState>(createAnalyzerState());
   const [analysisResult, setAnalysisResult] = useState<FormAnalysisResult | null>(null);
   const [showSummary, setShowSummary] = useState(false);
@@ -46,6 +47,7 @@ function WorkoutContent() {
 
   const { videoRef, canvasRef, isInitialized, isLoading: isCameraLoading, error, debug, startCamera, stopCamera } = usePoseDetector({
     enabled: true,
+    showSkeleton,
     onResults: useCallback((results: any) => {
       if (!exercise?.hasAiDetection) return;
       
@@ -308,7 +310,7 @@ function WorkoutContent() {
             </Card>
 
             {exercise.hasAiDetection && (
-              <div className="flex justify-center gap-2">
+              <div className="flex justify-center gap-2 flex-wrap">
                 <Button
                   variant={isCameraActive ? "destructive" : "outline"}
                   size="sm"
@@ -320,6 +322,15 @@ function WorkoutContent() {
                     <><Camera className="w-4 h-4 mr-1" /> Start Camera</>
                   )}
                 </Button>
+                {isCameraActive && (
+                  <Button
+                    variant={showSkeleton ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setShowSkeleton(!showSkeleton)}
+                  >
+                    {showSkeleton ? 'Hide Skeleton' : 'Show Skeleton'}
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   size="sm"

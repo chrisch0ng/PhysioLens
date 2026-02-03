@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Landmark } from '@/types';
 
-// MediaPipe types
 interface PoseLandmark {
   x: number;
   y: number;
@@ -52,64 +51,49 @@ declare global {
 interface UsePoseDetectorOptions {
   onResults?: (results: PoseResults) => void;
   enabled?: boolean;
+  showSkeleton?: boolean;
 }
 
-// Throttle to 10fps for better performance
-const FRAME_INTERVAL = 100; // ms
+// Aggressive throttling - 5fps max
+const FRAME_INTERVAL = 200; // 200ms = 5fps
+const SKIP_FRAMES = 2; // Process every 3rd frame
 
-export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOptions = {}) {
+export function usePoseDetector({ onResults, enabled = true, showSkeleton = true }: UsePoseDetectorOptions = {}) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const poseRef = useRef<PoseSolution | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const animationFrameRef = useRef<number | null>(null);
-  const isRunningRef = useRef(false);
-  const lastFrameTimeRef = useRef(0);
+  const rafRef = useRef<number | null>(null);
+  const frameCountRef = useRef(0);
   const [isInitialized, setIsInitialized] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [scriptsLoaded, setScriptsLoaded] = useState(false);
   const [debug, setDebug] = useState<string>('');
 
-  // Load MediaPipe scripts
+  // Load scripts
   useEffect(() => {
     if (!enabled) return;
 
-    const loadScript = (src: string): Promise<void> => {
-      return new Promise((resolve, reject) => {
-        if (document.querySelector(`script[src="${src}"]`)) {
-          resolve();
-          return;
-        }
-        const script = document.createElement('script');
-        script.src = src;
-        script.crossOrigin = 'anonymous';
-        script.async = true;
-        script.onload = () => resolve();
-        script.onerror = () => reject(new Error(`Failed to load ${src}`));
-        document.head.appendChild(script);
-      });
-    };
+    const loadScript = (src: string) => new Promise<void>((resolve, reject) => {
+      if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
+      const script = document.createElement('script');
+      script.src = src;
+      script.crossOrigin = 'anonymous';
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error(`Failed: ${src}`));
+      document.head.appendChild(script);
+    });
 
-    const loadMediaPipe = async () => {
-      try {
-        setIsLoading(true);
-        await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js');
-        await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js');
-        await new Promise(resolve => setTimeout(resolve, 500));
-        setScriptsLoaded(true);
-        setError(null);
-      } catch (err) {
-        setError('Failed to load MediaPipe');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    loadMediaPipe();
+    loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js')
+      .then(() => loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js'))
+      .then(() => new Promise(r => setTimeout(r, 500)))
+      .then(() => setScriptsLoaded(true))
+      .catch(() => setError('Failed to load'));
   }, [enabled]);
 
-  // Initialize MediaPipe Pose with performance settings
+  // Init pose
   useEffect(() => {
     if (!enabled || !scriptsLoaded || !window.Pose) return;
 
@@ -118,52 +102,43 @@ export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOp
         locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`,
       });
 
-      // Use lightest model for best performance
+      // Ultra-light settings
       pose.setOptions({
-        modelComplexity: 0, // 0 = lite, 1 = full, 2 = heavy
-        smoothLandmarks: true,
+        modelComplexity: 0,
+        smoothLandmarks: false, // Disable smoothing - causes lag
         enableSegmentation: false,
         smoothSegmentation: false,
-        minDetectionConfidence: 0.3, // Lower threshold = faster
+        minDetectionConfidence: 0.3,
         minTrackingConfidence: 0.3,
       });
 
       pose.onResults((results) => {
-        // Draw on canvas
-        if (canvasRef.current && videoRef.current) {
-          const canvas = canvasRef.current;
-          const ctx = canvas.getContext('2d');
-          const video = videoRef.current;
-          
-          if (ctx && video.readyState >= 2) {
-            // Only resize if needed
-            if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
-              canvas.width = video.videoWidth || 640;
-              canvas.height = video.videoHeight || 480;
-            }
+        if (!canvasRef.current || !videoRef.current) return;
+        
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d');
+        const video = videoRef.current;
+        
+        if (!ctx || video.readyState < 2) return;
 
-            ctx.save();
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            
-            // Draw video frame
-            try {
-              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            } catch (e) {}
+        // Resize once
+        if (canvas.width !== video.videoWidth) {
+          canvas.width = video.videoWidth || 640;
+          canvas.height = video.videoHeight || 480;
+        }
 
-            // Draw skeleton if landmarks exist
-            if (results.poseLandmarks && window.drawConnectors && window.drawLandmarks) {
-              window.drawConnectors(ctx, results.poseLandmarks, window.POSE_CONNECTIONS, {
-                color: '#14b8a6',
-                lineWidth: 2, // Thinner lines
-              });
-              window.drawLandmarks(ctx, results.poseLandmarks, {
-                color: '#0d9488',
-                lineWidth: 1,
-                radius: 3, // Smaller dots
-              });
-            }
-            ctx.restore();
-          }
+        // Clear and draw video
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        // Draw skeleton (only if enabled)
+        if (showSkeleton && results.poseLandmarks && window.drawConnectors) {
+          window.drawConnectors(ctx, results.poseLandmarks, window.POSE_CONNECTIONS, {
+            color: '#14b8a6', lineWidth: 2,
+          });
+          window.drawLandmarks(ctx, results.poseLandmarks, {
+            color: '#0d9488', lineWidth: 1, radius: 3,
+          });
         }
 
         onResults?.(results);
@@ -171,40 +146,28 @@ export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOp
 
       poseRef.current = pose;
       setIsInitialized(true);
-    } catch (err) {
-      setError('Failed to initialize pose');
+    } catch {
+      setError('Init failed');
     }
 
     return () => poseRef.current?.close();
   }, [enabled, scriptsLoaded, onResults]);
 
-  // Start camera with throttled processing
+  // Start camera
   const startCamera = useCallback(async () => {
-    if (!videoRef.current || !poseRef.current) {
-      setError('Not ready');
-      return;
-    }
-
-    if (isRunningRef.current) return;
+    if (!videoRef.current || !poseRef.current) return;
 
     try {
       setIsLoading(true);
-      setError(null);
-      isRunningRef.current = true;
 
       // Stop existing
       if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current.getTracks().forEach(t => t.stop());
       }
 
-      // Get camera with lower resolution for performance
+      // Low-res camera
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { 
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-          frameRate: { ideal: 15, max: 30 }, // Limit framerate
-          facingMode: 'user' 
-        },
+        video: { width: 640, height: 480, frameRate: { max: 10 } },
         audio: false
       });
 
@@ -212,101 +175,65 @@ export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOp
       const video = videoRef.current;
       video.srcObject = stream;
 
-      // Wait for video with timeout
-      let attempts = 0;
-      const waitForVideo = () => {
-        return new Promise<void>((resolve, reject) => {
-          const check = () => {
-            attempts++;
-            if (video.readyState >= 2 && video.videoWidth > 0) {
-              resolve();
-            } else if (attempts > 100) {
-              reject(new Error('Timeout'));
-            } else {
-              setTimeout(check, 50);
-            }
-          };
-          check();
-        });
-      };
+      // Wait for ready
+      await new Promise<void>((resolve) => {
+        const check = () => {
+          if (video.readyState >= 2 && video.videoWidth > 0) resolve();
+          else setTimeout(check, 50);
+        };
+        check();
+      });
 
-      await waitForVideo();
-      
-      try { await video.play(); } catch (e) {}
+      await video.play().catch(() => {});
 
-      // Throttled processing loop
-      const processFrame = async (timestamp: number) => {
-        if (!isRunningRef.current || !videoRef.current || !poseRef.current) return;
+      // Processing loop with frame skipping
+      let lastTime = 0;
+      const loop = async (time: number) => {
+        if (!videoRef.current || !poseRef.current) return;
         
-        // Throttle to 10fps
-        if (timestamp - lastFrameTimeRef.current < FRAME_INTERVAL) {
-          animationFrameRef.current = requestAnimationFrame(processFrame);
+        // Throttle by time
+        if (time - lastTime < FRAME_INTERVAL) {
+          rafRef.current = requestAnimationFrame(loop);
           return;
         }
-        lastFrameTimeRef.current = timestamp;
+        lastTime = time;
         
+        // Skip frames
+        frameCountRef.current++;
+        if (frameCountRef.current % (SKIP_FRAMES + 1) !== 0) {
+          rafRef.current = requestAnimationFrame(loop);
+          return;
+        }
+
         const video = videoRef.current;
         if (video.readyState >= 2 && !video.paused) {
-          try {
-            await poseRef.current.send({ image: video });
-          } catch (e) {}
+          await poseRef.current.send({ image: video }).catch(() => {});
         }
-        
-        if (isRunningRef.current) {
-          animationFrameRef.current = requestAnimationFrame(processFrame);
-        }
+
+        rafRef.current = requestAnimationFrame(loop);
       };
 
-      animationFrameRef.current = requestAnimationFrame(processFrame);
+      rafRef.current = requestAnimationFrame(loop);
       setIsLoading(false);
-      setDebug('Camera active (10fps)');
+      setDebug('5fps mode');
 
     } catch (err: any) {
-      isRunningRef.current = false;
-      let errorMsg = 'Camera failed';
-      if (err.name === 'NotAllowedError') errorMsg = 'Permission denied';
-      else if (err.name === 'NotFoundError') errorMsg = 'No camera';
-      setError(errorMsg);
+      setError(err.name === 'NotAllowedError' ? 'Denied' : 'Failed');
       setIsLoading(false);
     }
   }, []);
 
-  // Stop camera
+  // Stop
   const stopCamera = useCallback(() => {
-    isRunningRef.current = false;
-    
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = null;
-    }
-    
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
-    
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-    
-    lastFrameTimeRef.current = 0;
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    if (videoRef.current) videoRef.current.srcObject = null;
+    frameCountRef.current = 0;
   }, []);
 
-  return {
-    videoRef,
-    canvasRef,
-    isInitialized,
-    isLoading,
-    error,
-    debug,
-    startCamera,
-    stopCamera,
-  };
+  return { videoRef, canvasRef, isInitialized, isLoading, error, debug, startCamera, stopCamera };
 }
 
 export function extractLandmarks(results: PoseResults): Landmark[] {
-  if (!results.poseLandmarks) return [];
-  return results.poseLandmarks.map((landmark) => ({
-    x: landmark.x, y: landmark.y, z: landmark.z, visibility: landmark.visibility ?? 0,
-  }));
+  return results.poseLandmarks?.map(l => ({ x: l.x, y: l.y, z: l.z, visibility: l.visibility ?? 0 })) ?? [];
 }
