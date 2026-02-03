@@ -54,24 +54,33 @@ interface UsePoseDetectorOptions {
   showSkeleton?: boolean;
 }
 
+const PROCESS_INTERVAL = 100; // 10fps for pose detection
+
 export function usePoseDetector({ onResults, enabled = true, showSkeleton = true }: UsePoseDetectorOptions = {}) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const poseRef = useRef<PoseSolution | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const rafRef = useRef<number | null>(null);
-  const lastFrameTimeRef = useRef<number>(0);
+  const lastProcessTimeRef = useRef<number>(0);
+  const lastResultsRef = useRef<PoseResults | null>(null);
+  const processingRef = useRef<boolean>(false);
   const onResultsRef = useRef(onResults);
+  const showSkeletonRef = useRef(showSkeleton);
   const [isInitialized, setIsInitialized] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [scriptsLoaded, setScriptsLoaded] = useState(false);
   const [debug, setDebug] = useState<string>('');
 
-  // Keep onResults ref up to date without re-triggering effects
   useEffect(() => {
     onResultsRef.current = onResults;
   }, [onResults]);
+
+  useEffect(() => {
+    showSkeletonRef.current = showSkeleton;
+  }, [showSkeleton]);
 
   // Load scripts
   useEffect(() => {
@@ -106,7 +115,7 @@ export function usePoseDetector({ onResults, enabled = true, showSkeleton = true
 
       pose.setOptions({
         modelComplexity: 0,
-        smoothLandmarks: false,
+        smoothLandmarks: true, // Enable smoothing for smoother skeleton
         enableSegmentation: false,
         smoothSegmentation: false,
         minDetectionConfidence: 0.3,
@@ -114,33 +123,8 @@ export function usePoseDetector({ onResults, enabled = true, showSkeleton = true
       });
 
       pose.onResults((results) => {
-        // Only draw skeleton if enabled
-        if (showSkeleton && canvasRef.current && videoRef.current && results.poseLandmarks) {
-          const canvas = canvasRef.current;
-          const ctx = canvas.getContext('2d', { willReadFrequently: true });
-          const video = videoRef.current;
-          
-          if (!ctx || video.readyState < 2) return;
-
-          if (canvas.width !== video.videoWidth) {
-            canvas.width = video.videoWidth || 640;
-            canvas.height = video.videoHeight || 480;
-          }
-
-          ctx.clearRect(0, 0, canvas.width, canvas.height);
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-          if (window.drawConnectors) {
-            window.drawConnectors(ctx, results.poseLandmarks, window.POSE_CONNECTIONS, {
-              color: '#14b8a6', lineWidth: 2,
-            });
-            window.drawLandmarks(ctx, results.poseLandmarks, {
-              color: '#0d9488', lineWidth: 1, radius: 3,
-            });
-          }
-        }
-
-        // Call user's onResults handler
+        lastResultsRef.current = results;
+        processingRef.current = false;
         onResultsRef.current?.(results);
       });
 
@@ -151,38 +135,65 @@ export function usePoseDetector({ onResults, enabled = true, showSkeleton = true
     }
 
     return () => poseRef.current?.close();
-  }, [enabled, scriptsLoaded, showSkeleton]);
+  }, [enabled, scriptsLoaded]);
 
-  // Frame processing loop with throttling
-  const processFrame = useCallback(async () => {
-    if (!videoRef.current || !poseRef.current) return;
-
+  // Main loop: draws at 60fps, processes pose at 10fps
+  const frameLoop = useCallback(() => {
     const video = videoRef.current;
-    const now = performance.now();
+    const canvas = canvasRef.current;
     
-    // Throttle to 5fps (200ms between frames)
-    if (now - lastFrameTimeRef.current >= 200) {
-      lastFrameTimeRef.current = now;
-      
-      if (video.readyState >= 2 && !video.paused) {
-        try {
-          await poseRef.current.send({ image: video });
-        } catch (e) {
-          // Ignore frame errors
-        }
-      }
+    if (!video || !canvas || video.readyState < 2) {
+      rafRef.current = requestAnimationFrame(frameLoop);
+      return;
     }
 
-    // Schedule next frame
-    rafRef.current = requestAnimationFrame(processFrame);
+    // Cache context
+    if (!ctxRef.current) {
+      ctxRef.current = canvas.getContext('2d', { alpha: true }) || null;
+    }
+    const ctx = ctxRef.current;
+    if (!ctx) {
+      rafRef.current = requestAnimationFrame(frameLoop);
+      return;
+    }
+
+    // Resize once
+    if (canvas.width !== video.videoWidth) {
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+    }
+
+    // Always draw video frame (smooth 60fps display)
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // Draw skeleton if enabled and available
+    if (showSkeletonRef.current && lastResultsRef.current?.poseLandmarks && window.drawConnectors) {
+      window.drawConnectors(ctx, lastResultsRef.current.poseLandmarks, window.POSE_CONNECTIONS, {
+        color: '#14b8a6', lineWidth: 2,
+      });
+      window.drawLandmarks(ctx, lastResultsRef.current.poseLandmarks, {
+        color: '#0d9488', lineWidth: 1, radius: 3,
+      });
+    }
+
+    // Throttled pose detection (10fps)
+    const now = performance.now();
+    if (now - lastProcessTimeRef.current >= PROCESS_INTERVAL && !processingRef.current) {
+      lastProcessTimeRef.current = now;
+      processingRef.current = true;
+      
+      poseRef.current?.send({ image: video }).catch(() => {
+        processingRef.current = false;
+      });
+    }
+
+    rafRef.current = requestAnimationFrame(frameLoop);
   }, []);
 
   // Start camera
   const startCamera = useCallback(async () => {
-    console.log('[startCamera] Called');
-    
     if (!videoRef.current || !poseRef.current) {
-      console.log('[startCamera] Missing refs');
       setError('Not ready');
       return;
     }
@@ -191,16 +202,13 @@ export function usePoseDetector({ onResults, enabled = true, showSkeleton = true
       setIsLoading(true);
       setError(null);
 
-      // Stop existing
       stopCameraInternal();
 
-      // Get camera at lower resolution for performance
-      console.log('[startCamera] Getting user media...');
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { 
           width: { ideal: 640 },
           height: { ideal: 480 },
-          frameRate: { max: 10 }
+          frameRate: { ideal: 30 } // Smooth video at 30fps
         },
         audio: false
       });
@@ -209,15 +217,11 @@ export function usePoseDetector({ onResults, enabled = true, showSkeleton = true
       const video = videoRef.current;
       video.srcObject = stream;
 
-      console.log('[startCamera] Waiting for video...');
-      
-      // Wait for video to be ready
       await new Promise<void>((resolve, reject) => {
         let attempts = 0;
         const check = () => {
           attempts++;
           if (video.readyState >= 2 && video.videoWidth > 0) {
-            console.log('[startCamera] Video ready:', video.videoWidth, 'x', video.videoHeight);
             resolve();
           } else if (attempts > 50) {
             reject(new Error('Video timeout'));
@@ -228,20 +232,16 @@ export function usePoseDetector({ onResults, enabled = true, showSkeleton = true
         check();
       });
 
-      // Play video
       await video.play();
 
-      // Start processing loop
-      console.log('[startCamera] Starting 5fps loop...');
-      lastFrameTimeRef.current = 0;
-      rafRef.current = requestAnimationFrame(processFrame);
+      // Start the smooth loop
+      lastProcessTimeRef.current = 0;
+      rafRef.current = requestAnimationFrame(frameLoop);
 
       setIsLoading(false);
-      setDebug('5fps');
-      console.log('[startCamera] Camera active');
+      setDebug('smooth');
 
     } catch (err: any) {
-      console.error('[startCamera] Error:', err);
       setIsLoading(false);
       let msg = 'Camera failed';
       if (err.name === 'NotAllowedError') msg = 'Permission denied';
@@ -249,9 +249,8 @@ export function usePoseDetector({ onResults, enabled = true, showSkeleton = true
       else if (err.message) msg = err.message;
       setError(msg);
     }
-  }, [processFrame]);
+  }, [frameLoop]);
 
-  // Internal stop function
   const stopCameraInternal = useCallback(() => {
     if (rafRef.current) {
       cancelAnimationFrame(rafRef.current);
@@ -266,16 +265,17 @@ export function usePoseDetector({ onResults, enabled = true, showSkeleton = true
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
+    
+    ctxRef.current = null;
+    lastResultsRef.current = null;
+    processingRef.current = false;
   }, []);
 
-  // Public stop function
   const stopCamera = useCallback(() => {
-    console.log('[stopCamera] Called');
     stopCameraInternal();
     setIsLoading(false);
   }, [stopCameraInternal]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => stopCameraInternal();
   }, [stopCameraInternal]);
