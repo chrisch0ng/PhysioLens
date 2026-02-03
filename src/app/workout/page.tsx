@@ -44,7 +44,7 @@ function WorkoutContent() {
   const progress = useProgressStore();
   const timer = useWorkoutTimer();
 
-  const { videoRef, canvasRef, isInitialized, error, startCamera, stopCamera } = usePoseDetector({
+  const { videoRef, canvasRef, isInitialized, isLoading: isCameraLoading, error, startCamera, stopCamera } = usePoseDetector({
     enabled: isCameraActive && exercise?.hasAiDetection,
     onResults: useCallback((results: any) => {
       if (!exercise?.hasAiDetection) return;
@@ -203,15 +203,17 @@ function WorkoutContent() {
                   <>
                     <video
                       ref={videoRef}
-                      className="absolute inset-0 w-full h-full object-cover opacity-0"
+                      className="absolute inset-0 w-full h-full object-cover"
                       playsInline
+                      muted
+                      autoPlay
                     />
                     <canvas
                       ref={canvasRef}
-                      className="absolute inset-0 w-full h-full object-cover"
+                      className="absolute inset-0 w-full h-full object-cover pointer-events-none"
                     />
                     {!isCameraActive && (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center text-white">
+                      <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-slate-900/90">
                         <Camera className="w-16 h-16 mb-4 opacity-50" />
                         <p className="text-lg font-medium mb-2">Camera is off</p>
                         <p className="text-sm opacity-70 mb-4">Enable camera for AI form detection</p>
@@ -221,9 +223,26 @@ function WorkoutContent() {
                         </Button>
                       </div>
                     )}
+                    {isCameraLoading && (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-slate-900/90">
+                        <div className="w-12 h-12 border-4 border-teal-500 border-t-transparent rounded-full animate-spin mb-4" />
+                        <p className="text-lg font-medium">Starting camera...</p>
+                        <p className="text-sm opacity-70">Please allow camera access when prompted</p>
+                      </div>
+                    )}
                     {error && (
-                      <div className="absolute inset-0 flex items-center justify-center text-white">
-                        <p className="text-red-400">{error}</p>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-slate-900/90 p-8 text-center">
+                        <AlertCircle className="w-16 h-16 mb-4 text-red-500" />
+                        <p className="text-lg font-medium text-red-400 mb-2">Camera Error</p>
+                        <p className="text-sm opacity-70">{error}</p>
+                        <Button 
+                          variant="outline" 
+                          className="mt-4 border-white/20 text-white hover:bg-white/10"
+                          onClick={handleToggleCamera}
+                        >
+                          <RotateCcw className="w-4 h-4 mr-2" />
+                          Try Again
+                        </Button>
                       </div>
                     )}
                   </>
