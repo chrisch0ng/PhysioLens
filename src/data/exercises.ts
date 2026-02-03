@@ -1,0 +1,248 @@
+import { Exercise } from '@/types';
+
+export const exercises: Exercise[] = [
+  {
+    id: 'cat-camel',
+    name: 'Cat-Camel',
+    slug: 'cat-camel',
+    tier: 1,
+    bodyRegion: 'lower_back',
+    category: 'mobility',
+    difficulty: 'beginner',
+    description: 'A gentle spinal mobility exercise that alternates between arching and rounding the back while on all fours. Promotes flexibility and reduces stiffness.',
+    instructions: [
+      'Start on all fours with hands under shoulders and knees under hips',
+      'Keep your neck neutral, looking at the floor',
+      'Inhale and slowly arch your back, dropping your belly (Camel)',
+      'Exhale and round your spine toward the ceiling (Cat)',
+      'Move slowly and smoothly between positions',
+    ],
+    commonMistakes: [
+      'Moving too quickly between positions',
+      'Not engaging the core during the movement',
+      'Keeping the hips stationary',
+    ],
+    targetMuscles: ['Spinal erectors', 'Rectus abdominis', 'Multifidus'],
+    defaultSets: 2,
+    defaultReps: 10,
+    defaultHoldSeconds: 3,
+    repType: 'alternating',
+    hasAiDetection: true,
+  },
+  {
+    id: 'cobra-stretch',
+    name: 'Cobra Stretch',
+    slug: 'cobra-stretch',
+    tier: 1,
+    bodyRegion: 'lower_back',
+    category: 'stretch',
+    difficulty: 'beginner',
+    description: 'A prone back extension exercise that gently stretches the abdominal muscles and strengthens the lower back extensors.',
+    instructions: [
+      'Lie face down with legs extended',
+      'Place hands under shoulders, elbows close to body',
+      'Press into your hands and slowly lift your chest',
+      'Keep your hips and legs pressed into the mat',
+      'Hold the position, breathing normally',
+    ],
+    commonMistakes: [
+      'Lifting hips off the floor',
+      'Pushing too high and hyperextending',
+      'Shrugging shoulders toward ears',
+    ],
+    targetMuscles: ['Erector spinae', 'Rectus abdominis'],
+    defaultSets: 2,
+    defaultReps: 10,
+    defaultHoldSeconds: 5,
+    repType: 'hold',
+    hasAiDetection: true,
+  },
+  {
+    id: 'dead-bug',
+    name: 'Dead Bug',
+    slug: 'dead-bug',
+    tier: 1,
+    bodyRegion: 'core',
+    category: 'stability',
+    difficulty: 'intermediate',
+    description: 'A supine core stability exercise that trains the deep stabilizers while moving the arms and legs. Teaches proper bracing.',
+    instructions: [
+      'Lie on your back with arms extended toward ceiling',
+      'Lift legs to tabletop position (90 degrees)',
+      'Press lower back firmly into the floor',
+      'Slowly extend opposite arm and leg',
+      'Keep your lower back pressed into the mat',
+    ],
+    commonMistakes: [
+      'Allowing lower back to arch off the floor',
+      'Moving too quickly and losing control',
+      'Not fully extending arm and leg',
+    ],
+    targetMuscles: ['Transverse abdominis', 'Rectus abdominis', 'Obliques'],
+    defaultSets: 2,
+    defaultReps: 10,
+    defaultHoldSeconds: 0,
+    repType: 'alternating',
+    hasAiDetection: true,
+  },
+  {
+    id: 'bodyweight-squat',
+    name: 'Bodyweight Squat',
+    slug: 'bodyweight-squat',
+    tier: 1,
+    bodyRegion: 'lower_body',
+    category: 'strength',
+    difficulty: 'beginner',
+    description: 'A fundamental lower body exercise that strengthens the quadriceps, glutes, and core while improving mobility.',
+    instructions: [
+      'Stand with feet shoulder-width apart',
+      'Keep your chest up and core engaged',
+      'Push your hips back and bend your knees',
+      'Lower until thighs are parallel to the floor',
+      'Press through your heels to return to standing',
+    ],
+    commonMistakes: [
+      'Not reaching parallel depth',
+      'Knees caving inward',
+      'Excessive forward lean',
+    ],
+    targetMuscles: ['Quadriceps', 'Glutes', 'Hamstrings', 'Core'],
+    defaultSets: 3,
+    defaultReps: 10,
+    defaultHoldSeconds: 0,
+    repType: 'standard',
+    hasAiDetection: true,
+  },
+  {
+    id: 'glute-bridge',
+    name: 'Glute Bridge',
+    slug: 'glute-bridge',
+    tier: 2,
+    bodyRegion: 'lower_body',
+    category: 'strength',
+    difficulty: 'beginner',
+    description: 'A fundamental hip extension exercise that strengthens the gluteal muscles and teaches hip hinge mechanics.',
+    instructions: [
+      'Lie on your back with knees bent, feet flat',
+      'Place feet hip-width apart, arms at sides',
+      'Press through heels to lift hips toward ceiling',
+      'Squeeze glutes at the top',
+      'Create a straight line from shoulders to knees',
+    ],
+    commonMistakes: [
+      'Hyperextending lower back at top',
+      'Pushing through toes instead of heels',
+      'Not fully squeezing glutes',
+    ],
+    targetMuscles: ['Gluteus maximus', 'Hamstrings', 'Core'],
+    defaultSets: 3,
+    defaultReps: 15,
+    defaultHoldSeconds: 2,
+    repType: 'standard',
+    hasAiDetection: false,
+  },
+  {
+    id: 'bird-dog',
+    name: 'Bird Dog',
+    slug: 'bird-dog',
+    tier: 2,
+    bodyRegion: 'core',
+    category: 'stability',
+    difficulty: 'intermediate',
+    description: 'A quadruped exercise that challenges core stability while extending opposite arm and leg. Strengthens the posterior chain.',
+    instructions: [
+      'Start on all fours with hands under shoulders',
+      'Keep spine neutral and core engaged',
+      'Slowly extend opposite arm and leg',
+      'Keep hips and shoulders level',
+      'Hold briefly at full extension',
+    ],
+    commonMistakes: [
+      'Rotating hips or shoulders',
+      'Arching lower back',
+      'Lifting arm or leg too high',
+    ],
+    targetMuscles: ['Multifidus', 'Glutes', 'Shoulders', 'Core'],
+    defaultSets: 2,
+    defaultReps: 10,
+    defaultHoldSeconds: 3,
+    repType: 'alternating',
+    hasAiDetection: false,
+  },
+  {
+    id: 'child-pose',
+    name: "Child's Pose",
+    slug: 'child-pose',
+    tier: 2,
+    bodyRegion: 'lower_back',
+    category: 'stretch',
+    difficulty: 'beginner',
+    description: 'A restorative position that gently stretches the lower back, hips, and thighs. Excellent for relaxation.',
+    instructions: [
+      'Start on hands and knees',
+      'Sit hips back toward heels',
+      'Extend arms forward on the floor',
+      'Rest forehead on the mat',
+      'Let your entire body relax',
+    ],
+    commonMistakes: [
+      'Keeping hips too far forward',
+      'Tensing shoulders',
+      'Not fully relaxing',
+    ],
+    targetMuscles: ['Latissimus dorsi', 'Glutes', 'Lower back'],
+    defaultSets: 3,
+    defaultReps: 1,
+    defaultHoldSeconds: 30,
+    repType: 'timed',
+    hasAiDetection: false,
+  },
+  {
+    id: 'side-plank',
+    name: 'Side Plank',
+    slug: 'side-plank',
+    tier: 2,
+    bodyRegion: 'core',
+    category: 'stability',
+    difficulty: 'intermediate',
+    description: 'A lateral core stability exercise that strengthens the obliques and quadratus lumborum.',
+    instructions: [
+      'Lie on your side with elbow under shoulder',
+      'Stack feet or stagger them',
+      'Lift hips off the ground',
+      'Keep core engaged and hips lifted',
+      'Hold for prescribed time',
+    ],
+    commonMistakes: [
+      'Hips sagging toward the floor',
+      'Hips piking up too high',
+      'Elbow not under shoulder',
+    ],
+    targetMuscles: ['Obliques', 'Quadratus lumborum', 'Gluteus medius'],
+    defaultSets: 3,
+    defaultReps: 1,
+    defaultHoldSeconds: 20,
+    repType: 'timed',
+    hasAiDetection: false,
+  },
+];
+
+export function getExerciseBySlug(slug: string): Exercise | undefined {
+  return exercises.find(e => e.slug === slug);
+}
+
+export function getExerciseById(id: string): Exercise | undefined {
+  return exercises.find(e => e.id === id);
+}
+
+export function getTier1Exercises(): Exercise[] {
+  return exercises.filter(e => e.tier === 1);
+}
+
+export function getExercisesByRegion(region: Exercise['bodyRegion']): Exercise[] {
+  return exercises.filter(e => e.bodyRegion === region);
+}
+
+export function getExercisesByCategory(category: Exercise['category']): Exercise[] {
+  return exercises.filter(e => e.category === category);
+}
