@@ -66,8 +66,9 @@ export function usePoseDetector({ onResults, enabled = true }: UsePoseDetectorOp
   const [scriptsLoaded, setScriptsLoaded] = useState(false);
   const [debug, setDebug] = useState<string>('');
 
-  // Load MediaPipe scripts
+  // Load MediaPipe scripts immediately on mount
   useEffect(() => {
+    console.log('[PoseDetector] Starting script load, enabled:', enabled);
     if (!enabled) return;
 
     const loadScript = (src: string): Promise<void> => {

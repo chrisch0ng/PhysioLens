@@ -45,7 +45,7 @@ function WorkoutContent() {
   const timer = useWorkoutTimer();
 
   const { videoRef, canvasRef, isInitialized, isLoading: isCameraLoading, error, debug, startCamera, stopCamera } = usePoseDetector({
-    enabled: isCameraActive && exercise?.hasAiDetection,
+    enabled: true,
     onResults: useCallback((results: any) => {
       if (!exercise?.hasAiDetection) return;
       
@@ -102,15 +102,24 @@ function WorkoutContent() {
     );
   }
 
-  const handleToggleCamera = async () => {
+  // Handle camera toggle
+  const handleToggleCamera = () => {
     if (isCameraActive) {
       stopCamera();
       setIsCameraActive(false);
     } else {
       setIsCameraActive(true);
-      await startCamera();
+      // Camera will start via useEffect below
     }
   };
+
+  // Auto-start camera when ready
+  useEffect(() => {
+    if (isCameraActive && isInitialized && !isCameraLoading && exercise?.hasAiDetection) {
+      console.log('[Workout] Auto-starting camera');
+      startCamera();
+    }
+  }, [isCameraActive, isInitialized, isCameraLoading, exercise, startCamera]);
 
   const handleCompleteSet = () => {
     session.completeSet();
@@ -223,7 +232,15 @@ function WorkoutContent() {
                         opacity: isInitialized ? 1 : 0
                       }}
                     />
-                    {!isCameraActive && (
+                    {!isCameraActive && !isInitialized && (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-slate-900/90">
+                        <div className="w-12 h-12 border-4 border-teal-500 border-t-transparent rounded-full animate-spin mb-4" />
+                        <p className="text-lg font-medium mb-2">Loading AI...</p>
+                        <p className="text-sm opacity-70">Please wait while we initialize the pose detector</p>
+                      </div>
+                    )}
+                    
+                    {!isCameraActive && isInitialized && (
                       <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-slate-900/90">
                         <Camera className="w-16 h-16 mb-4 opacity-50" />
                         <p className="text-lg font-medium mb-2">Camera is off</p>
