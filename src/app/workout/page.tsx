@@ -40,12 +40,14 @@ function WorkoutContent() {
   const [analyzerState, setAnalyzerState] = useState<FormAnalyzerState>(createAnalyzerState());
   const [analysisResult, setAnalysisResult] = useState<FormAnalysisResult | null>(null);
   const [showSummary, setShowSummary] = useState(false);
+  // Use a ref to prevent the camera from starting multiple times
   const cameraStartedRef = useRef(false);
 
   const session = useSessionStore();
   const progress = useProgressStore();
   const timer = useWorkoutTimer();
 
+  // Set up the pose detector hook
   const { videoRef, canvasRef, isInitialized, isLoading: isCameraLoading, error, debug, startCamera, stopCamera } = usePoseDetector({
     enabled: true,
     showSkeleton,
@@ -55,9 +57,11 @@ function WorkoutContent() {
       const landmarks = extractLandmarks(results);
       if (landmarks.length === 0) return;
 
+      // Run the form analysis for this exercise
       const result = analyzeForm(exercise.id, landmarks, analyzerState);
       setAnalysisResult(result);
 
+      // Update session stats when we detect a new rep
       if (result.repCount > session.repCount) {
         session.incrementRep();
       }
@@ -65,7 +69,9 @@ function WorkoutContent() {
       session.updatePhase(result.phase);
       session.setFormCorrectness(result.isCorrect);
 
+      // Handle new feedback - speak it if audio is on
       result.feedback.forEach((fb: FormFeedback) => {
+        // Don't repeat the same feedback within 3 seconds
         const isNew = !session.feedbackHistory.some(
           h => h.message === fb.message && Date.now() - h.timestamp < 3000
         );
@@ -79,6 +85,7 @@ function WorkoutContent() {
     }, [exercise, analyzerState, session, audioEnabled]),
   });
 
+  // Start the session when we load the exercise
   useEffect(() => {
     if (exercise && !session.isActive) {
       session.startSession(exercise);
@@ -86,6 +93,7 @@ function WorkoutContent() {
     }
   }, [exercise, session, progress]);
 
+  // Clean up camera when leaving the page
   useEffect(() => {
     return () => {
       stopCamera();
@@ -105,19 +113,18 @@ function WorkoutContent() {
     );
   }
 
-  // Handle camera toggle
   const handleToggleCamera = () => {
     if (isCameraActive) {
       stopCamera();
       setIsCameraActive(false);
-      cameraStartedRef.current = false; // Reset so it can be started again
+      cameraStartedRef.current = false;
     } else {
       setIsCameraActive(true);
-      // Camera will start via useEffect below
+      // Camera will actually start in the useEffect below once things are ready
     }
   };
 
-  // Auto-start camera when ready - only once
+  // Auto-start the camera once everything is initialized
   useEffect(() => {
     if (isCameraActive && isInitialized && !isCameraLoading && exercise?.hasAiDetection && !cameraStartedRef.current) {
       console.log('[Workout] Auto-starting camera');
@@ -215,7 +222,6 @@ function WorkoutContent() {
               <div className="relative aspect-video bg-slate-900">
                 {exercise.hasAiDetection ? (
                   <>
-                    {/* Video element - always visible when camera is on */}
                     <video
                       ref={videoRef}
                       className="absolute inset-0 w-full h-full object-cover"
@@ -223,12 +229,12 @@ function WorkoutContent() {
                       muted
                       autoPlay
                       style={{ 
-                        transform: 'scaleX(-1)',
+                        transform: 'scaleX(-1)', // Mirror the video so it feels natural
                         backgroundColor: '#000'
                       }}
                     />
                     
-                    {/* Canvas overlay for pose detection - only when skeleton enabled */}
+                    {/* Only show the canvas overlay when skeleton is enabled */}
                     {showSkeleton && (
                       <canvas
                         ref={canvasRef}
@@ -239,10 +245,14 @@ function WorkoutContent() {
                         }}
                       />
                     )}
-                    {/* Single overlay that handles all states */}
+                    
+                    {/* 
+                      Overlay states - using a single conditional chain to prevent 
+                      multiple overlays from fighting each other and causing flicker
+                    */}
                     {!isCameraActive ? (
                       isInitialized ? (
-                        // Camera off, ready to start
+                        // Camera is ready but user hasn't turned it on yet
                         <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-slate-900/90">
                           <Camera className="w-16 h-16 mb-4 opacity-50" />
                           <p className="text-lg font-medium mb-2">Camera is off</p>
@@ -253,7 +263,7 @@ function WorkoutContent() {
                           </Button>
                         </div>
                       ) : (
-                        // Loading AI
+                        // Still loading MediaPipe
                         <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-slate-900/90">
                           <div className="w-12 h-12 border-4 border-teal-500 border-t-transparent rounded-full animate-spin mb-4" />
                           <p className="text-lg font-medium mb-2">Loading AI...</p>
@@ -261,14 +271,14 @@ function WorkoutContent() {
                         </div>
                       )
                     ) : isCameraLoading ? (
-                      // Camera starting
+                      // Camera permission dialog or initializing
                       <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-slate-900/90">
                         <div className="w-12 h-12 border-4 border-teal-500 border-t-transparent rounded-full animate-spin mb-4" />
                         <p className="text-lg font-medium">Starting camera...</p>
                         <p className="text-sm opacity-70">Please allow camera access</p>
                       </div>
                     ) : error ? (
-                      // Error state
+                      // Something went wrong with the camera
                       <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-slate-900/90 p-8 text-center">
                         <AlertCircle className="w-16 h-16 mb-4 text-red-500" />
                         <p className="text-lg font-medium text-red-400 mb-2">Camera Error</p>
@@ -285,6 +295,7 @@ function WorkoutContent() {
                     ) : null}
                   </>
                 ) : (
+                  // This exercise doesn't have AI detection - show placeholder
                   <div className="absolute inset-0 flex flex-col items-center justify-center text-white bg-gradient-to-br from-sage-700 to-sage-900">
                     <Activity className="w-16 h-16 mb-4 opacity-50" />
                     <p className="text-lg font-medium">Guided Exercise</p>
@@ -292,6 +303,7 @@ function WorkoutContent() {
                   </div>
                 )}
 
+                {/* Live form score badge */}
                 {isCameraActive && analysisResult && (
                   <div className="absolute top-4 right-4">
                     <div className={`px-4 py-2 rounded-full text-white font-bold ${getScoreBgColor(analysisResult.formScore)}`}>
@@ -300,6 +312,7 @@ function WorkoutContent() {
                   </div>
                 )}
 
+                {/* Current exercise phase indicator */}
                 {isCameraActive && analysisResult && (
                   <div className="absolute bottom-4 left-4">
                     <Badge className="bg-black/50 text-white border-0 capitalize">
@@ -308,7 +321,7 @@ function WorkoutContent() {
                   </div>
                 )}
                 
-                {/* Debug info */}
+                {/* Debug info - only in dev mode */}
                 {process.env.NODE_ENV === 'development' && debug && (
                   <div className="absolute top-4 left-4 bg-black/70 text-white text-xs p-2 rounded font-mospace max-w-[200px]">
                     {debug}
