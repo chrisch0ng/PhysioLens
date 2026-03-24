@@ -1,8 +1,12 @@
 /** @type {import('next').NextConfig} */
+const isProd = process.env.NODE_ENV === 'production';
+
 const nextConfig = {
   output: 'export',
   distDir: 'dist',
   trailingSlash: true,
+  basePath: isProd ? '/PhysioLens' : '',
+  assetPrefix: isProd ? '/PhysioLens/' : '',
   images: {
     unoptimized: true,
   },
