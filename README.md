@@ -2,7 +2,7 @@
 
 AI-powered physical therapy platform with real-time form correction.
 
-**[Live Demo](https://yourusername.github.io/physiolens)**
+**[Live Demo](https://chrisch0ng.github.io/PhysioLens)**
 
 ## What it does (Current)
 
