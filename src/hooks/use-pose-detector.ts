@@ -150,53 +150,73 @@ export function usePoseDetector({ onResults, enabled = true, showSkeleton = true
   // Main render loop - runs at display refresh rate (60fps)
   // We draw video every frame but only run pose detection every 50ms
   const frameLoop = useCallback(() => {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    
-    if (!video || !canvas || video.readyState < 2) {
-      rafRef.current = requestAnimationFrame(frameLoop);
-      return;
-    }
+    try {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
 
-    // Get canvas context once and reuse it
-    if (!ctxRef.current) {
-      ctxRef.current = canvas.getContext('2d', { alpha: true }) || null;
-    }
-    const ctx = ctxRef.current;
-    if (!ctx) {
-      rafRef.current = requestAnimationFrame(frameLoop);
-      return;
-    }
+      if (!video || !canvas || video.readyState < 2) {
+        rafRef.current = requestAnimationFrame(frameLoop);
+        return;
+      }
 
-    // Match canvas size to video on first frame
-    if (canvas.width !== video.videoWidth) {
-      canvas.width = video.videoWidth || 640;
-      canvas.height = video.videoHeight || 480;
-    }
+      // Get canvas context once and reuse it
+      if (!ctxRef.current) {
+        ctxRef.current = canvas.getContext('2d', { alpha: true }) || null;
+      }
+      const ctx = ctxRef.current;
+      if (!ctx) {
+        rafRef.current = requestAnimationFrame(frameLoop);
+        return;
+      }
 
-    // Draw the video frame
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      // Size the canvas to the container's display pixels
+      const displayW = canvas.clientWidth || 640;
+      const displayH = canvas.clientHeight || 480;
+      if (canvas.width !== displayW || canvas.height !== displayH) {
+        canvas.width = displayW;
+        canvas.height = displayH;
+      }
 
-    // Overlay the skeleton if user has it enabled
-    if (showSkeletonRef.current && lastResultsRef.current?.poseLandmarks && window.drawConnectors) {
-      window.drawConnectors(ctx, lastResultsRef.current.poseLandmarks, window.POSE_CONNECTIONS, {
-        color: '#14b8a6', lineWidth: 2,
-      });
-      window.drawLandmarks(ctx, lastResultsRef.current.poseLandmarks, {
-        color: '#0d9488', lineWidth: 1, radius: 3,
-      });
-    }
+      // Clear — video is drawn by the <video> element itself, canvas is skeleton-only overlay
+      ctx.clearRect(0, 0, displayW, displayH);
 
-    // Run pose detection at 20fps (throttled)
-    const now = performance.now();
-    if (now - lastProcessTimeRef.current >= PROCESS_INTERVAL && !processingRef.current) {
-      lastProcessTimeRef.current = now;
-      processingRef.current = true;
-      
-      poseRef.current?.send({ image: video }).catch(() => {
-        processingRef.current = false;
-      });
+      // Overlay the skeleton aligned to the CSS object-cover crop of the video
+      if (showSkeletonRef.current && lastResultsRef.current?.poseLandmarks && window.drawConnectors) {
+        // drawConnectors maps normalized coords as: pixel = landmark.x * canvas.width
+        // But the video is displayed with object-cover, which scales+crops.
+        // We apply a canvas transform so the skeleton matches the crop exactly.
+        const vw = video.videoWidth || 640;
+        const vh = video.videoHeight || 480;
+        const cropScale = Math.max(displayW / vw, displayH / vh);
+        const offsetX = (displayW - vw * cropScale) / 2;
+        const offsetY = (displayH - vh * cropScale) / 2;
+        // setTransform(scaleX, 0, 0, scaleY, translateX, translateY)
+        ctx.setTransform(
+          (vw * cropScale) / displayW, 0,
+          0, (vh * cropScale) / displayH,
+          offsetX, offsetY
+        );
+        window.drawConnectors(ctx, lastResultsRef.current.poseLandmarks, window.POSE_CONNECTIONS, {
+          color: '#14b8a6', lineWidth: 2,
+        });
+        window.drawLandmarks(ctx, lastResultsRef.current.poseLandmarks, {
+          color: '#0d9488', lineWidth: 1, radius: 3,
+        });
+        ctx.setTransform(1, 0, 0, 1, 0, 0); // reset transform
+      }
+
+      // Run pose detection at 20fps (throttled)
+      const now = performance.now();
+      if (now - lastProcessTimeRef.current >= PROCESS_INTERVAL && !processingRef.current) {
+        lastProcessTimeRef.current = now;
+        processingRef.current = true;
+
+        poseRef.current?.send({ image: video }).catch(() => {
+          processingRef.current = false;
+        });
+      }
+    } catch {
+      // Never let an error kill the loop
     }
 
     rafRef.current = requestAnimationFrame(frameLoop);

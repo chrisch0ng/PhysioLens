@@ -43,6 +43,12 @@ export interface Exercise {
   repType: 'standard' | 'alternating' | 'hold' | 'timed';
   hasAiDetection: boolean;
   landmarks?: number[];
+  // Clinical metadata
+  conditionsItHelps: string[];
+  contraindicationsAvoid: string[];
+  difficultyLevel: 1 | 2 | 3;
+  phaseOfRecovery: 'acute' | 'subacute' | 'chronic';
+  clinicalSource: string;
 }
 
 export interface WorkoutSession {

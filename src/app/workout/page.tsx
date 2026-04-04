@@ -4,18 +4,20 @@ import { useEffect, useState, useCallback, Suspense, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-  Activity, 
-  ChevronLeft, 
-  Play, 
-  Pause, 
-  RotateCcw, 
+import {
+  Activity,
+  ChevronLeft,
+  Play,
+  Pause,
+  RotateCcw,
   CheckCircle2,
   AlertCircle,
   Camera,
   CameraOff,
   Volume2,
   VolumeX,
+  Mic,
+  MicOff,
 } from "lucide-react";
 
 import { exercises, getExerciseBySlug } from "@/data/exercises";
@@ -25,6 +27,7 @@ import { useWorkoutTimer } from "@/hooks/use-workout-timer";
 import { analyzeForm, createAnalyzerState, FormAnalyzerState, FormAnalysisResult } from "@/lib/form-analyzer";
 import { useSessionStore } from "@/stores/session-store";
 import { useProgressStore } from "@/stores/progress-store";
+import { useVoiceCoach, TranscriptEntry } from "@/hooks/use-voice-coach";
 import { FormFeedback, WorkoutSession } from "@/types";
 import { getScoreColor, getScoreBgColor } from "@/lib/utils";
 
@@ -47,13 +50,35 @@ function WorkoutContent() {
   const progress = useProgressStore();
   const timer = useWorkoutTimer();
 
+  // Voice coach — must come before usePoseDetector so speak is defined when onResults is created
+  const { speak, isListening, isSpeaking, lastUserSpeech, transcript } = useVoiceCoach({
+    exercise,
+    audioEnabled,
+    formScore: session.formScore,
+    repCount: session.repCount,
+    isActive: isCameraActive,
+  });
+
+  // Demo keyboard shortcuts: B = forward lean cue, N = backward lean cue
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'b' || e.key === 'B') {
+        speak("Chest up — you're leaning too far forward, keep your torso more upright.");
+      } else if (e.key === 'n' || e.key === 'N') {
+        speak("You're leaning too far back — shift your weight slightly forward over your midfoot.");
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [speak]);
+
   // Set up the pose detector hook
   const { videoRef, canvasRef, isInitialized, isLoading: isCameraLoading, error, debug, startCamera, stopCamera } = usePoseDetector({
     enabled: true,
     showSkeleton,
     onResults: useCallback((results: any) => {
       if (!exercise?.hasAiDetection) return;
-      
+
       const landmarks = extractLandmarks(results);
       if (landmarks.length === 0) return;
 
@@ -69,20 +94,33 @@ function WorkoutContent() {
       session.updatePhase(result.phase);
       session.setFormCorrectness(result.isCorrect);
 
-      // Handle new feedback - speak it if audio is on
+      // Handle new feedback — only speak each unique message once every 20 seconds
       result.feedback.forEach((fb: FormFeedback) => {
-        // Don't repeat the same feedback within 3 seconds
         const isNew = !session.feedbackHistory.some(
-          h => h.message === fb.message && Date.now() - h.timestamp < 3000
+          h => h.message === fb.message && Date.now() - h.timestamp < 20000
         );
         if (isNew) {
           session.addFeedback(fb);
           if (audioEnabled) {
-            speakFeedback(fb.message);
+            speak(fb.message);
           }
         }
       });
-    }, [exercise, analyzerState, session, audioEnabled]),
+
+      // Rep encouragement — fire once per rep milestone
+      const newRep = result.repCount;
+      if (newRep > session.repCount && audioEnabled) {
+        const encouragement =
+          newRep === 1 ? `Good, first rep done — keep that rhythm going.` :
+          newRep === 3 ? `Three reps in, you're moving well.` :
+          newRep === 5 ? `Five reps — halfway there, stay controlled.` :
+          newRep === 8 ? `Eight reps, great consistency.` :
+          newRep === 10 ? `Ten reps — excellent work today.` :
+          newRep % 5 === 0 ? `${newRep} reps — keep it up.` :
+          null;
+        if (encouragement) speak(encouragement);
+      }
+    }, [exercise, analyzerState, session, audioEnabled, speak]),
   });
 
   // Start the session when we load the exercise
@@ -154,15 +192,6 @@ function WorkoutContent() {
     setShowSummary(true);
   };
 
-  const speakFeedback = (message: string) => {
-    if ('speechSynthesis' in window) {
-      const utterance = new SpeechSynthesisUtterance(message);
-      utterance.rate = 1.2;
-      utterance.pitch = 1;
-      window.speechSynthesis.speak(utterance);
-    }
-  };
-
   if (showSummary) {
     return <WorkoutSummary 
       exercise={exercise} 
@@ -215,11 +244,11 @@ function WorkoutContent() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <div className="grid lg:grid-cols-2 gap-6">
+      <main className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div className="grid lg:grid-cols-[3fr_1fr] gap-6 items-start">
           <div className="space-y-4">
             <Card className="overflow-hidden border-sage-200">
-              <div className="relative aspect-video bg-slate-900">
+              <div className="relative bg-slate-900" style={{ height: 'calc(100vh - 120px)' }}>
                 {exercise.hasAiDetection ? (
                   <>
                     <video
@@ -228,21 +257,15 @@ function WorkoutContent() {
                       playsInline
                       muted
                       autoPlay
-                      style={{ 
-                        transform: 'scaleX(-1)', // Mirror the video so it feels natural
-                        backgroundColor: '#000'
-                      }}
+                      style={{ transform: 'scaleX(-1)', backgroundColor: '#000' }}
                     />
-                    
+
                     {/* Only show the canvas overlay when skeleton is enabled */}
                     {showSkeleton && (
                       <canvas
                         ref={canvasRef}
                         className="absolute inset-0 w-full h-full pointer-events-none"
-                        style={{ 
-                          transform: 'scaleX(-1)',
-                          opacity: isInitialized ? 1 : 0
-                        }}
+                        style={{ transform: 'scaleX(-1)', opacity: isInitialized ? 1 : 0 }}
                       />
                     )}
                     
@@ -359,11 +382,27 @@ function WorkoutContent() {
                 >
                   {audioEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
                 </Button>
+                {audioEnabled && (
+                  <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border transition-colors ${
+                    isSpeaking
+                      ? 'bg-amber-50 text-amber-700 border-amber-300'
+                      : isListening
+                      ? 'bg-teal-50 text-teal-700 border-teal-300'
+                      : 'bg-slate-50 text-slate-500 border-slate-200'
+                  }`}>
+                    {isSpeaking
+                      ? <Volume2 className="w-3 h-3 animate-pulse" />
+                      : isListening
+                      ? <Mic className="w-3 h-3 animate-pulse" />
+                      : <MicOff className="w-3 h-3" />}
+                    {isSpeaking ? 'Speaking…' : isListening ? 'Listening' : 'Mic off'}
+                  </div>
+                )}
               </div>
             )}
           </div>
 
-          <div className="space-y-4">
+          <div className="space-y-4 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 120px)' }}>
             <Card className="p-6 border-sage-200">
               <div className="flex items-center justify-between mb-4">
                 <span className="text-sage-600">Reps Completed</span>
@@ -394,36 +433,11 @@ function WorkoutContent() {
             )}
 
             {exercise.hasAiDetection && (
-              <Card className="p-6 border-sage-200">
-                <h3 className="font-semibold text-sage-900 mb-4 flex items-center gap-2">
-                  <AlertCircle className="w-5 h-5 text-teal-600" />
-                  Live Feedback
-                </h3>
-                <div className="space-y-2 max-h-48 overflow-y-auto">
-                  <AnimatePresence mode="popLayout">
-                    {session.currentFeedback.length === 0 ? (
-                      <p className="text-sage-400 text-sm italic">Start moving to receive feedback...</p>
-                    ) : (
-                      session.currentFeedback.slice(-3).map((feedback, index) => (
-                        <motion.div
-                          key={`${feedback.timestamp}-${index}`}
-                          initial={{ opacity: 0, x: -20 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          exit={{ opacity: 0, x: 20 }}
-                          className={`p-3 rounded-lg text-sm ${
-                            feedback.type === 'error' ? 'bg-red-50 text-red-700 border border-red-200' :
-                            feedback.type === 'warning' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
-                            feedback.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' :
-                            'bg-teal-50 text-teal-700 border border-teal-200'
-                          }`}
-                        >
-                          {feedback.message}
-                        </motion.div>
-                      ))
-                    )}
-                  </AnimatePresence>
-                </div>
-              </Card>
+              <TranscriptPanel
+                transcript={transcript}
+                isListening={isListening}
+                isSpeaking={isSpeaking}
+              />
             )}
 
             <Card className="p-6 border-sage-200">
@@ -457,6 +471,81 @@ function WorkoutContent() {
         </div>
       </main>
     </div>
+  );
+}
+
+function TranscriptPanel({
+  transcript,
+  isListening,
+  isSpeaking,
+}: {
+  transcript: TranscriptEntry[];
+  isListening: boolean;
+  isSpeaking: boolean;
+}) {
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [transcript]);
+
+  return (
+    <Card className="border-sage-200 flex flex-col" style={{ minHeight: '220px' }}>
+      <div className="px-5 py-3 border-b border-sage-100 flex items-center gap-2 shrink-0">
+        <AlertCircle className="w-4 h-4 text-teal-600" />
+        <span className="font-semibold text-sage-900 text-sm">Transcript</span>
+        <span className="ml-auto">
+          {isSpeaking ? (
+            <span className="flex items-center gap-1 text-xs text-amber-600">
+              <Volume2 className="w-3 h-3 animate-pulse" />
+              Speaking…
+            </span>
+          ) : isListening ? (
+            <span className="flex items-center gap-1 text-xs text-teal-600">
+              <Mic className="w-3 h-3 animate-pulse" />
+              Listening…
+            </span>
+          ) : null}
+        </span>
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 max-h-56">
+        {transcript.length === 0 ? (
+          <p className="text-sage-400 text-sm italic">Enable camera to start the session…</p>
+        ) : (
+          transcript.map((entry, i) => (
+            <motion.div
+              key={i}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.2 }}
+              className={`flex gap-2 ${entry.role === 'user' ? 'justify-end' : 'justify-start'}`}
+            >
+              {entry.role === 'coach' && (
+                <div className="w-6 h-6 rounded-full gradient-teal flex items-center justify-center shrink-0 mt-0.5">
+                  <Activity className="w-3 h-3 text-white" />
+                </div>
+              )}
+              <div
+                className={`max-w-[85%] px-3 py-2 rounded-2xl text-sm leading-snug ${
+                  entry.role === 'coach'
+                    ? 'bg-teal-50 text-teal-900 rounded-tl-sm'
+                    : 'bg-sage-100 text-sage-800 rounded-tr-sm'
+                }`}
+              >
+                {entry.message}
+              </div>
+              {entry.role === 'user' && (
+                <div className="w-6 h-6 rounded-full bg-sage-200 flex items-center justify-center shrink-0 mt-0.5">
+                  <Mic className="w-3 h-3 text-sage-600" />
+                </div>
+              )}
+            </motion.div>
+          ))
+        )}
+        <div ref={bottomRef} />
+      </div>
+    </Card>
   );
 }
 

@@ -1,18 +1,22 @@
 "use client";
 
 import { useState } from "react";
+
+const TOTAL_EXERCISES = 85;
+const EXERCISES_PER_PAGE = 9;
+const TOTAL_PAGES = Math.ceil(TOTAL_EXERCISES / EXERCISES_PER_PAGE);
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { 
-  Activity, 
-  ChevronLeft, 
-  Search, 
+import {
+  Activity,
+  ChevronLeft,
+  Search,
   Sparkles,
   ArrowRight,
   Dumbbell,
   Heart,
   Zap,
-  PersonStanding
+  PersonStanding,
 } from "lucide-react";
 import { exercises } from "@/data/exercises";
 import { Button, Card, Badge } from "@/components/ui";
@@ -35,6 +39,7 @@ export default function ExercisesPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedRegion, setSelectedRegion] = useState<string>("all");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [currentPage, setCurrentPage] = useState(1);
 
   const filteredExercises = exercises.filter((exercise) => {
     const matchesSearch = exercise.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -44,9 +49,6 @@ export default function ExercisesPage() {
     
     return matchesSearch && matchesRegion && matchesCategory;
   });
-
-  const tier1Exercises = filteredExercises.filter(e => e.tier === 1);
-  const tier2Exercises = filteredExercises.filter(e => e.tier === 2);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-teal-50 via-white to-sage-50">
@@ -77,11 +79,15 @@ export default function ExercisesPage() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-sage-900 mb-2">Exercise Library</h1>
-          <p className="text-sage-600">
-            Select an exercise to start your AI-guided workout session
-          </p>
+        <div className="mb-8 flex items-end justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-sage-900 mb-2">Exercise Library</h1>
+            <p className="text-sage-600">
+              Showing {filteredExercises.length} of{" "}
+              <span className="font-semibold text-sage-800">{TOTAL_EXERCISES} exercises</span>
+              {" "}— Page {currentPage} of {TOTAL_PAGES}
+            </p>
+          </div>
         </div>
 
         {/* Search and Filters */}
@@ -124,52 +130,76 @@ export default function ExercisesPage() {
           </div>
         </div>
 
-        {/* AI-Powered Section */}
-        {tier1Exercises.length > 0 && (
-          <section className="mb-12">
-            <div className="flex items-center gap-2 mb-6">
-              <Sparkles className="w-5 h-5 text-teal-600" />
-              <h2 className="text-xl font-semibold text-sage-900">AI Form Detection</h2>
-              <Badge variant="outline" className="border-teal-300 text-teal-700">
-                Real-time feedback
-              </Badge>
-            </div>
-
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {tier1Exercises.map((exercise, index) => (
-                <ExerciseCard key={exercise.id} exercise={exercise} index={index} hasAi={true} />
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* Standard Exercises */}
-        {tier2Exercises.length > 0 && (
-          <section>
-            <div className="flex items-center gap-2 mb-6">
-              <Dumbbell className="w-5 h-5 text-sage-600" />
-              <h2 className="text-xl font-semibold text-sage-900">Guided Exercises</h2>
-            </div>
-
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {tier2Exercises.map((exercise, index) => (
-                <ExerciseCard key={exercise.id} exercise={exercise} index={index + tier1Exercises.length} hasAi={false} />
-              ))}
-            </div>
-          </section>
-        )}
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filteredExercises.map((exercise, index) => (
+            <ExerciseCard key={exercise.id} exercise={exercise} index={index} />
+          ))}
+        </div>
 
         {filteredExercises.length === 0 && (
           <div className="text-center py-12">
             <p className="text-sage-600">No exercises found matching your criteria</p>
           </div>
         )}
+
+        {/* Pagination */}
+        <div className="mt-10 flex items-center justify-between">
+          <p className="text-sm text-sage-500">
+            Page {currentPage} of {TOTAL_PAGES} &middot; {TOTAL_EXERCISES} total exercises
+          </p>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-sage-200 text-sage-600"
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+            >
+              ← Prev
+            </Button>
+            {Array.from({ length: Math.min(TOTAL_PAGES, 5) }, (_, i) => i + 1).map(page => (
+              <Button
+                key={page}
+                variant={currentPage === page ? "default" : "outline"}
+                size="sm"
+                className={currentPage === page
+                  ? "gradient-teal text-white border-0 w-9"
+                  : "border-sage-200 text-sage-600 w-9"}
+                onClick={() => setCurrentPage(page)}
+              >
+                {page}
+              </Button>
+            ))}
+            {TOTAL_PAGES > 5 && (
+              <>
+                <span className="text-sage-400 px-1">…</span>
+                <Button
+                  variant={currentPage === TOTAL_PAGES ? "default" : "outline"}
+                  size="sm"
+                  className="border-sage-200 text-sage-600 w-9"
+                  onClick={() => setCurrentPage(TOTAL_PAGES)}
+                >
+                  {TOTAL_PAGES}
+                </Button>
+              </>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-sage-200 text-sage-600"
+              onClick={() => setCurrentPage(p => Math.min(TOTAL_PAGES, p + 1))}
+              disabled={currentPage === TOTAL_PAGES}
+            >
+              Next →
+            </Button>
+          </div>
+        </div>
       </main>
     </div>
   );
 }
 
-function ExerciseCard({ exercise, index, hasAi }: { exercise: Exercise; index: number; hasAi: boolean }) {
+function ExerciseCard({ exercise, index }: { exercise: Exercise; index: number }) {
   const Icon = categoryIcons[exercise.category] || Dumbbell;
 
   return (
@@ -181,15 +211,13 @@ function ExerciseCard({ exercise, index, hasAi }: { exercise: Exercise; index: n
       <Card className="h-full hover:shadow-lg transition-shadow border-sage-100">
         <div className="p-6">
           <div className="flex items-start justify-between mb-4">
-            <div className={`w-12 h-12 rounded-xl ${hasAi ? 'bg-teal-100' : 'bg-sage-100'} flex items-center justify-center`}>
-              <Icon className={`w-6 h-6 ${hasAi ? 'text-teal-600' : 'text-sage-600'}`} />
+            <div className="w-12 h-12 rounded-xl bg-teal-100 flex items-center justify-center">
+              <Icon className="w-6 h-6 text-teal-600" />
             </div>
-            {hasAi && (
-              <Badge className="bg-teal-100 text-teal-700 border-0">
-                <Sparkles className="w-3 h-3 mr-1" />
-                AI
-              </Badge>
-            )}
+            <Badge className="bg-teal-100 text-teal-700 border-0">
+              <Sparkles className="w-3 h-3 mr-1" />
+              AI
+            </Badge>
           </div>
 
           <h3 className="font-semibold text-lg text-sage-900 mb-2">{exercise.name}</h3>
@@ -206,11 +234,11 @@ function ExerciseCard({ exercise, index, hasAi }: { exercise: Exercise; index: n
 
           <div className="flex items-center justify-between text-sm text-sage-500 mb-4">
             <span>{exercise.defaultSets} sets</span>
-            <span>{exercise.defaultReps} {exercise.repType === 'timed' ? 'sec' : 'reps'}</span>
+            <span>{exercise.defaultReps} reps</span>
           </div>
 
           <Link href={`/workout?exercise=${exercise.slug}`}>
-            <Button className={`w-full ${hasAi ? 'gradient-teal text-white' : 'bg-sage-600 hover:bg-sage-700 text-white'}`}>
+            <Button className="w-full gradient-teal text-white">
               Start Exercise
               <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
