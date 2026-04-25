@@ -335,10 +335,42 @@ function WorkoutContent() {
       </header>
 
       <main className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <div className="grid lg:grid-cols-[3fr_1fr] gap-6 items-start">
+        <div className="grid lg:grid-cols-[1fr_3fr_1fr] gap-6 items-start">
+
+          {/* Left column: demo video + instructions */}
+          <div className="space-y-4 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 120px)' }}>
+            {exercise.demoVideoUrl && (
+              <Card className="overflow-hidden border-sage-200">
+                <div className="px-5 py-3 border-b border-sage-100">
+                  <span className="font-semibold text-sage-900 text-sm">Demo</span>
+                </div>
+                <div className="relative w-full" style={{ paddingBottom: '100%' }}>
+                  <video
+                    src={exercise.demoVideoUrl}
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                    className="absolute inset-0 w-full h-full object-cover"
+                    style={{ objectPosition: exercise.demoVideoPosition ?? 'center center' }}
+                  />
+                </div>
+              </Card>
+            )}
+            <Card className="p-6 border-sage-200">
+              <h3 className="font-semibold text-sage-900 mb-4">Instructions</h3>
+              <ol className="space-y-2 text-sm text-sage-600 list-decimal list-inside">
+                {exercise.instructions.map((instruction, index) => (
+                  <li key={index}>{instruction}</li>
+                ))}
+              </ol>
+            </Card>
+          </div>
+
+          {/* Center column: camera */}
           <div className="space-y-4">
             <Card className="overflow-hidden border-sage-200">
-              <div className="relative bg-slate-900" style={{ height: 'calc(100vh - 120px)' }}>
+              <div className="relative bg-slate-900" style={{ height: 'calc(100vh - 220px)' }}>
                 {exercise.hasAiDetection ? (
                   <>
                     <video
@@ -509,6 +541,7 @@ function WorkoutContent() {
                 )}
               </div>
             )}
+
           </div>
 
           <div className="space-y-4 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 120px)' }}>
@@ -548,34 +581,6 @@ function WorkoutContent() {
                 isSpeaking={isSpeaking}
               />
             )}
-
-            {exercise.demoVideoUrl && (
-              <Card className="overflow-hidden border-sage-200">
-                <div className="px-5 py-3 border-b border-sage-100">
-                  <span className="font-semibold text-sage-900 text-sm">Demo</span>
-                </div>
-                <div className="relative w-full" style={{ paddingBottom: '100%' }}>
-                  <video
-                    src={exercise.demoVideoUrl}
-                    autoPlay
-                    loop
-                    muted
-                    playsInline
-                    className="absolute inset-0 w-full h-full object-cover"
-                    style={{ objectPosition: exercise.demoVideoPosition ?? 'center center' }}
-                  />
-                </div>
-              </Card>
-            )}
-
-            <Card className="p-6 border-sage-200">
-              <h3 className="font-semibold text-sage-900 mb-4">Instructions</h3>
-              <ol className="space-y-2 text-sm text-sage-600 list-decimal list-inside">
-                {exercise.instructions.map((instruction, index) => (
-                  <li key={index}>{instruction}</li>
-                ))}
-              </ol>
-            </Card>
 
             <div className="flex gap-3">
               <Button
