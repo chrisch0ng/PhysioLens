@@ -42,6 +42,8 @@ export interface Exercise {
   defaultHoldSeconds: number;
   repType: 'standard' | 'alternating' | 'hold' | 'timed';
   hasAiDetection: boolean;
+  demoVideoUrl?: string;
+  demoVideoPosition?: string;
   landmarks?: number[];
   // Clinical metadata
   conditionsItHelps: string[];

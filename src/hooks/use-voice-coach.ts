@@ -141,8 +141,15 @@ export function useVoiceCoach({
 
     try {
       if (effectivePriority >= FeedbackPriority.HIGH) {
-        // Immediate speech — bypasses LLM, no latency
-        vapiRef.current.say(message);
+        // Send as an urgent system message — Gemini responds immediately with the exact phrase
+        vapiRef.current.send({
+          type: "add-message",
+          message: {
+            role: "system",
+            content: `[URGENT — say this phrase immediately, word for word, nothing else]: "${message}"`,
+          },
+          triggerResponseEnabled: true,
+        });
         setTranscript(prev => [...prev, { role: "coach", message, timestamp: now }]);
       } else {
         // Let Gemini rephrase and respond naturally
@@ -254,7 +261,7 @@ export function useVoiceCoach({
       },
       voice: {
         provider: "openai",
-        voiceId: "nova",
+        voiceId: "shimmer",
       },
       firstMessage: `Hi, I'm your PhysioLens coach. Today we're doing ${exercise.name}. Start whenever you're ready.`,
     });
@@ -291,5 +298,9 @@ export function useVoiceCoach({
     }
   }, [audioEnabled]);
 
-  return { speak, injectContext, isListening, isSpeaking, lastUserSpeech, transcript };
+  const addTranscriptEntry = useCallback((entry: TranscriptEntry) => {
+    setTranscript(prev => [...prev, entry]);
+  }, []);
+
+  return { speak, injectContext, isListening, isSpeaking, lastUserSpeech, transcript, isCallReady: callReadyRef, addTranscriptEntry };
 }

@@ -43,9 +43,19 @@ function WorkoutContent() {
   const [analyzerState, setAnalyzerState] = useState<FormAnalyzerState>(createAnalyzerState());
   const [analysisResult, setAnalysisResult] = useState<FormAnalysisResult | null>(null);
   const [showSummary, setShowSummary] = useState(false);
-  // Vapi starts only after camera is fully running to avoid resource conflict
   const [isVoiceReady, setIsVoiceReady] = useState(false);
+  const [demoScore, setDemoScore] = useState<number | null>(null);
+  const [coachPill, setCoachPill] = useState<string | null>(null);
+  const [pillKey, setPillKey] = useState(0);
   const cameraStartedRef = useRef(false);
+  const demoScoreTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pillTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const triggerDemoScore = useCallback((score: number) => {
+    if (demoScoreTimerRef.current) clearTimeout(demoScoreTimerRef.current);
+    setDemoScore(score);
+    demoScoreTimerRef.current = setTimeout(() => setDemoScore(null), 5000);
+  }, []);
 
   const session = useSessionStore();
   const progress = useProgressStore();
@@ -56,13 +66,23 @@ function WorkoutContent() {
   const pendingContextRef = useRef<string | null>(null);
   const FEEDBACK_COOLDOWN = 3000;
 
-  const { speak, injectContext, isListening, isSpeaking, lastUserSpeech, transcript } = useVoiceCoach({
+  const { speak, injectContext, isListening, isSpeaking, lastUserSpeech, transcript, isCallReady, addTranscriptEntry } = useVoiceCoach({
     exercise,
     audioEnabled,
     formScore: session.formScore,
     repCount: session.repCount,
     isActive: isVoiceReady,
   });
+
+  // Show the latest coach message in the camera pill overlay
+  useEffect(() => {
+    const lastCoach = [...transcript].reverse().find(t => t.role === 'coach');
+    if (!lastCoach) return;
+    if (pillTimerRef.current) clearTimeout(pillTimerRef.current);
+    setCoachPill(lastCoach.message);
+    setPillKey(k => k + 1);
+    pillTimerRef.current = setTimeout(() => setCoachPill(null), 6000);
+  }, [transcript]);
 
   // Flush queued context when assistant stops speaking (mirrors Rehabify's pendingContext pattern)
   useEffect(() => {
@@ -73,22 +93,58 @@ function WorkoutContent() {
     }
   }, [isSpeaking, isVoiceReady, injectContext]);
 
-  // Demo keyboard shortcuts: B = forward lean, N = backward lean, L/M = lunge-specific corrections
+  // Demo keyboard shortcuts: B = forward lean, N = backward lean, L/M = lunge, 1/2/3 = squat
+  // demoSay: uses Vapi if connected, falls back to browser TTS so demo keys always fire
+  const demoSay = useCallback((message: string) => {
+    if (isCallReady.current) {
+      // speak() adds to transcript immediately for HIGH priority, then Vapi says it
+      speak(message, FeedbackPriority.HIGH);
+    } else {
+      // Add to transcript before audio so pill and transcript show up first
+      addTranscriptEntry({ role: 'coach', message, timestamp: Date.now() });
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(message);
+      utterance.rate = 0.95;
+      const pickVoice = () => {
+        const voices = window.speechSynthesis.getVoices();
+        const female = voices.find(v =>
+          /aria|jenny|zira|samantha|google uk english female|karen|moira|tessa|fiona|female/i.test(v.name)
+        );
+        if (female) utterance.voice = female;
+        window.speechSynthesis.speak(utterance);
+      };
+      if (window.speechSynthesis.getVoices().length) {
+        pickVoice();
+      } else {
+        window.speechSynthesis.addEventListener('voiceschanged', pickVoice, { once: true });
+      }
+    }
+  }, [speak, isCallReady, addTranscriptEntry]);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'b' || e.key === 'B') {
-        speak("Chest up — you're leaning too far forward, keep your torso more upright.", FeedbackPriority.HIGH);
+        demoSay("Chest up — you're leaning too far forward, keep your torso more upright.");
       } else if (e.key === 'n' || e.key === 'N') {
-        speak("You're leaning too far back — shift your weight slightly forward over your midfoot.", FeedbackPriority.HIGH);
-      } else if ((e.key === 'l' || e.key === 'L') && slug === 'lunge') {
-        speak("Your front knee is caving inward — push it out so it tracks directly over your second toe.", FeedbackPriority.HIGH);
-      } else if ((e.key === 'm' || e.key === 'M') && slug === 'lunge') {
-        speak("Drop your back knee lower — aim to hover it just above the floor to get the full range of motion.", FeedbackPriority.HIGH);
+        demoSay("You're leaning too far back — shift your weight slightly forward over your midfoot.");
+      } else if (e.key === 'l' || e.key === 'L') {
+        demoSay("Your front knee is caving inward — push it out so it tracks directly over your second toe.");
+      } else if (e.key === 'm' || e.key === 'M') {
+        demoSay("Drop your back knee lower — aim to hover it just above the floor to get the full range of motion.");
+      } else if (e.key === '1' && exercise?.id === 'bodyweight-squat') {
+        demoSay("Sit back more — keep your knees behind your toes.");
+        triggerDemoScore(12);
+      } else if (e.key === '2' && exercise?.id === 'bodyweight-squat') {
+        demoSay("Squat a bit deeper.");
+        triggerDemoScore(84);
+      } else if (e.key === '3' && exercise?.id === 'bodyweight-squat') {
+        demoSay("Good depth, hold it!");
+        triggerDemoScore(91);
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [speak, slug]);
+  }, [demoSay, exercise, triggerDemoScore]);
 
   // Set up the pose detector hook
   const { videoRef, canvasRef, isInitialized, isLoading: isCameraLoading, error, debug, startCamera, stopCamera } = usePoseDetector({
@@ -360,11 +416,30 @@ function WorkoutContent() {
                   </div>
                 )}
 
+                {/* Coach speech pill */}
+                <AnimatePresence>
+                  {coachPill && (
+                    <motion.div
+                      key={pillKey}
+                      initial={{ opacity: 0, y: -8, scale: 0.96 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -8, scale: 0.96 }}
+                      transition={{ duration: 0.2 }}
+                      className="absolute top-4 left-4 z-10"
+                      style={{ maxWidth: 'calc(100% - 7rem)' }}
+                    >
+                      <div className="bg-teal-700/90 backdrop-blur-sm text-white text-xl font-semibold px-6 py-4 rounded-2xl shadow-lg leading-snug">
+                        {coachPill}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
                 {/* Live form score badge */}
                 {isCameraActive && analysisResult && (
                   <div className="absolute top-4 right-4">
-                    <div className={`px-4 py-2 rounded-full text-white font-bold ${getScoreBgColor(analysisResult.formScore)}`}>
-                      {analysisResult.formScore}%
+                    <div className={`px-4 py-2 rounded-full text-white font-bold ${getScoreBgColor(demoScore ?? analysisResult.formScore)}`}>
+                      {demoScore ?? analysisResult.formScore}%
                     </div>
                   </div>
                 )}
@@ -451,15 +526,15 @@ function WorkoutContent() {
               <Card className="p-6 border-sage-200">
                 <div className="flex items-center justify-between mb-4">
                   <span className="text-sage-600">Form Score</span>
-                  <span className={`text-2xl font-bold ${getScoreColor(session.formScore)}`}>
-                    {session.formScore}%
+                  <span className={`text-2xl font-bold ${getScoreColor(demoScore ?? session.formScore)}`}>
+                    {demoScore ?? session.formScore}%
                   </span>
                 </div>
                 <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                   <motion.div
-                    className={`h-full ${getScoreBgColor(session.formScore)}`}
+                    className={`h-full ${getScoreBgColor(demoScore ?? session.formScore)}`}
                     initial={{ width: 0 }}
-                    animate={{ width: `${session.formScore}%` }}
+                    animate={{ width: `${demoScore ?? session.formScore}%` }}
                     transition={{ duration: 0.3 }}
                   />
                 </div>
@@ -472,6 +547,25 @@ function WorkoutContent() {
                 isListening={isListening}
                 isSpeaking={isSpeaking}
               />
+            )}
+
+            {exercise.demoVideoUrl && (
+              <Card className="overflow-hidden border-sage-200">
+                <div className="px-5 py-3 border-b border-sage-100">
+                  <span className="font-semibold text-sage-900 text-sm">Demo</span>
+                </div>
+                <div className="relative w-full" style={{ paddingBottom: '100%' }}>
+                  <video
+                    src={exercise.demoVideoUrl}
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                    className="absolute inset-0 w-full h-full object-cover"
+                    style={{ objectPosition: exercise.demoVideoPosition ?? 'center center' }}
+                  />
+                </div>
+              </Card>
             )}
 
             <Card className="p-6 border-sage-200">
