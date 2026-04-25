@@ -27,7 +27,7 @@ import { useWorkoutTimer } from "@/hooks/use-workout-timer";
 import { analyzeForm, createAnalyzerState, FormAnalyzerState, FormAnalysisResult } from "@/lib/form-analyzer";
 import { useSessionStore } from "@/stores/session-store";
 import { useProgressStore } from "@/stores/progress-store";
-import { useVoiceCoach, TranscriptEntry } from "@/hooks/use-voice-coach";
+import { useVoiceCoach, TranscriptEntry, FeedbackPriority } from "@/hooks/use-voice-coach";
 import { FormFeedback, WorkoutSession } from "@/types";
 import { getScoreColor, getScoreBgColor } from "@/lib/utils";
 
@@ -43,7 +43,8 @@ function WorkoutContent() {
   const [analyzerState, setAnalyzerState] = useState<FormAnalyzerState>(createAnalyzerState());
   const [analysisResult, setAnalysisResult] = useState<FormAnalysisResult | null>(null);
   const [showSummary, setShowSummary] = useState(false);
-  // Use a ref to prevent the camera from starting multiple times
+  // Vapi starts only after camera is fully running to avoid resource conflict
+  const [isVoiceReady, setIsVoiceReady] = useState(false);
   const cameraStartedRef = useRef(false);
 
   const session = useSessionStore();
@@ -51,26 +52,43 @@ function WorkoutContent() {
   const timer = useWorkoutTimer();
 
   // Voice coach — must come before usePoseDetector so speak is defined when onResults is created
-  const { speak, isListening, isSpeaking, lastUserSpeech, transcript } = useVoiceCoach({
+  const lastFeedbackTimeRef = useRef<number>(0);
+  const pendingContextRef = useRef<string | null>(null);
+  const FEEDBACK_COOLDOWN = 3000;
+
+  const { speak, injectContext, isListening, isSpeaking, lastUserSpeech, transcript } = useVoiceCoach({
     exercise,
     audioEnabled,
     formScore: session.formScore,
     repCount: session.repCount,
-    isActive: isCameraActive,
+    isActive: isVoiceReady,
   });
 
-  // Demo keyboard shortcuts: B = forward lean cue, N = backward lean cue
+  // Flush queued context when assistant stops speaking (mirrors Rehabify's pendingContext pattern)
+  useEffect(() => {
+    if (!isSpeaking && pendingContextRef.current && isVoiceReady) {
+      injectContext(pendingContextRef.current);
+      lastFeedbackTimeRef.current = Date.now();
+      pendingContextRef.current = null;
+    }
+  }, [isSpeaking, isVoiceReady, injectContext]);
+
+  // Demo keyboard shortcuts: B = forward lean, N = backward lean, L/M = lunge-specific corrections
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'b' || e.key === 'B') {
-        speak("Chest up — you're leaning too far forward, keep your torso more upright.");
+        speak("Chest up — you're leaning too far forward, keep your torso more upright.", FeedbackPriority.HIGH);
       } else if (e.key === 'n' || e.key === 'N') {
-        speak("You're leaning too far back — shift your weight slightly forward over your midfoot.");
+        speak("You're leaning too far back — shift your weight slightly forward over your midfoot.", FeedbackPriority.HIGH);
+      } else if ((e.key === 'l' || e.key === 'L') && slug === 'lunge') {
+        speak("Your front knee is caving inward — push it out so it tracks directly over your second toe.", FeedbackPriority.HIGH);
+      } else if ((e.key === 'm' || e.key === 'M') && slug === 'lunge') {
+        speak("Drop your back knee lower — aim to hover it just above the floor to get the full range of motion.", FeedbackPriority.HIGH);
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [speak]);
+  }, [speak, slug]);
 
   // Set up the pose detector hook
   const { videoRef, canvasRef, isInitialized, isLoading: isCameraLoading, error, debug, startCamera, stopCamera } = usePoseDetector({
@@ -86,41 +104,56 @@ function WorkoutContent() {
       const result = analyzeForm(exercise.id, landmarks, analyzerState);
       setAnalysisResult(result);
 
-      // Update session stats when we detect a new rep
-      if (result.repCount > session.repCount) {
-        session.incrementRep();
-      }
       session.updateFormScore(result.formScore);
       session.updatePhase(result.phase);
       session.setFormCorrectness(result.isCorrect);
 
-      // Handle new feedback — only speak each unique message once every 20 seconds
+      // Update UI feedback panel (display only — no voice per frame)
       result.feedback.forEach((fb: FormFeedback) => {
         const isNew = !session.feedbackHistory.some(
           h => h.message === fb.message && Date.now() - h.timestamp < 20000
         );
-        if (isNew) {
-          session.addFeedback(fb);
-          if (audioEnabled) {
-            speak(fb.message);
-          }
-        }
+        if (isNew) session.addFeedback(fb);
       });
 
-      // Rep encouragement — fire once per rep milestone
-      const newRep = result.repCount;
-      if (newRep > session.repCount && audioEnabled) {
-        const encouragement =
-          newRep === 1 ? `Good, first rep done — keep that rhythm going.` :
-          newRep === 3 ? `Three reps in, you're moving well.` :
-          newRep === 5 ? `Five reps — halfway there, stay controlled.` :
-          newRep === 8 ? `Eight reps, great consistency.` :
-          newRep === 10 ? `Ten reps — excellent work today.` :
-          newRep % 5 === 0 ? `${newRep} reps — keep it up.` :
-          null;
-        if (encouragement) speak(encouragement);
+      // Rep-gated voice — only speak when a rep completes (Rehabify pattern)
+      if (result.repIncremented) {
+        session.incrementRep();
+        result.repSummaryErrors.forEach(msg => {
+          session.addFeedback({ type: 'warning', message: msg, timestamp: Date.now() });
+        });
+
+        if (audioEnabled) {
+          const now = Date.now();
+          const repNum = result.repCount;
+          const targetReps = session.targetReps;
+          const isHalfway = repNum === Math.floor(targetReps / 2);
+          const isComplete = repNum >= targetReps;
+          const isMilestone = isHalfway || isComplete;
+          const cooldownOk = now - lastFeedbackTimeRef.current >= FEEDBACK_COOLDOWN;
+
+          if (cooldownOk || isMilestone) {
+            let context = '';
+            if (isComplete) {
+              context = `[SESSION END]\nExercise: ${exercise.name}\nReps completed: ${repNum}/${targetReps}\nFinal form score: ${result.formScore}%\nCongratulate them warmly on finishing the set.`;
+            } else if (isHalfway) {
+              context = `[REP COMPLETED]\nExercise: ${exercise.name}\nRep: ${repNum}/${targetReps} (HALFWAY POINT)\nForm score: ${result.formScore}%\n${result.repSummaryErrors.length > 0 ? `Form issues this rep: ${result.repSummaryErrors.join('; ')}` : 'Form was good.'}\nAcknowledge the halfway milestone briefly.`;
+            } else if (result.repSummaryErrors.length > 0) {
+              context = `[FORM FEEDBACK NEEDED]\nExercise: ${exercise.name}\nRep: ${repNum}/${targetReps}\nForm score: ${result.formScore}%\nForm issues this rep: ${result.repSummaryErrors.join('; ')}\nGive ONE brief correction (5-15 words max). Use varied phrasing.`;
+            } else {
+              context = `[REP COMPLETED]\nExercise: ${exercise.name}\nRep: ${repNum}/${targetReps}\nForm score: ${result.formScore}%\nForm was good. Brief encouragement (3-5 words max). Examples: "Nice!", "Good rep!", "Keep it up!"`;
+            }
+
+            if (isSpeaking) {
+              pendingContextRef.current = context;
+            } else {
+              injectContext(context);
+              lastFeedbackTimeRef.current = now;
+            }
+          }
+        }
       }
-    }, [exercise, analyzerState, session, audioEnabled, speak]),
+    }, [exercise, analyzerState, session, audioEnabled, injectContext, isSpeaking]),
   });
 
   // Start the session when we load the exercise
@@ -155,20 +188,21 @@ function WorkoutContent() {
     if (isCameraActive) {
       stopCamera();
       setIsCameraActive(false);
+      setIsVoiceReady(false);
       cameraStartedRef.current = false;
     } else {
       setIsCameraActive(true);
-      // Camera will actually start in the useEffect below once things are ready
     }
   };
 
-  // Auto-start the camera once everything is initialized
+  // Auto-start camera, then start Vapi 500ms later once stream is stable
   useEffect(() => {
     if (isCameraActive && isInitialized && !isCameraLoading && exercise?.hasAiDetection && !cameraStartedRef.current) {
-      console.log('[Workout] Auto-starting camera');
       cameraStartedRef.current = true;
       startCamera();
+      setTimeout(() => setIsVoiceReady(true), 500);
     }
+    if (!isCameraActive) setIsVoiceReady(false);
   }, [isCameraActive, isInitialized, isCameraLoading, exercise?.hasAiDetection]);
 
   const handleCompleteSet = () => {
