@@ -479,7 +479,7 @@ export function analyzeSquat(
   let newPhase = state.phase;
   if (kneeAngle > 160) newPhase = 'standing';
   else if (kneeAngle < 90) newPhase = 'bottom';
-  else if (state.phase === 'bottom' || (state.phase === 'descending' && kneeAngle < 120)) {
+  else if (state.phase === 'ascending' || state.phase === 'bottom' || (state.phase === 'descending' && kneeAngle < 120)) {
     newPhase = 'ascending';
   } else if (kneeAngle < 140) {
     newPhase = 'descending';
@@ -489,9 +489,6 @@ export function analyzeSquat(
   const isActive = newPhase === 'descending' || newPhase === 'bottom' || newPhase === 'ascending';
   if (isActive) {
     state.baselineValues.minKneeAngle = Math.min(state.baselineValues.minKneeAngle ?? 180, kneeAngle);
-  }
-  if (newPhase === 'standing') {
-    state.baselineValues.minKneeAngle = 180; // reset for next rep
   }
 
   // Form checks during squat movement
@@ -533,6 +530,7 @@ export function analyzeSquat(
     }
   }
   state.phase = newPhase;
+  if (newPhase === 'standing') state.baselineValues.minKneeAngle = 180; // reset for next rep
   if (newPhase === 'standing' && !repIncremented) state.repTrajectory = [];
 
   if (!repIncremented) {
@@ -541,9 +539,17 @@ export function analyzeSquat(
       POSE_LANDMARKS.LEFT_KNEE, POSE_LANDMARKS.RIGHT_KNEE,
       POSE_LANDMARKS.LEFT_ANKLE, POSE_LANDMARKS.RIGHT_ANKLE,
     ]);
-    formScore = Math.round(visibility * 100);
-    if (kneeAngle < 90) formScore = Math.min(100, formScore + 10);
-    else if (kneeAngle > 120) formScore = Math.max(50, formScore - 20);
+    if (visibility < 0.4) {
+      formScore = 0;
+    } else if (!isActive) {
+      formScore = 75; // standing between reps — neutral baseline
+    } else {
+      // Live quality score: start high, penalise forward lean and reward depth
+      let score = 88;
+      if (trunkLean > 15) score -= Math.min(35, Math.round((trunkLean - 15) * 1.5));
+      if (kneeAngle < 100) score = Math.min(100, score + 8);
+      formScore = Math.max(30, score);
+    }
   }
 
   return {

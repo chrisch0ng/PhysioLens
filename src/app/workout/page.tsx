@@ -50,6 +50,10 @@ function WorkoutContent() {
   const cameraStartedRef = useRef(false);
   const demoScoreTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pillTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ttsVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
+  const smoothedScoreRef = useRef<number>(75);
+  const demoKeyActiveRef = useRef(false);
+  const demoKeyClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const triggerDemoScore = useCallback((score: number) => {
     if (demoScoreTimerRef.current) clearTimeout(demoScoreTimerRef.current);
@@ -64,6 +68,7 @@ function WorkoutContent() {
   // Voice coach — must come before usePoseDetector so speak is defined when onResults is created
   const lastFeedbackTimeRef = useRef<number>(0);
   const pendingContextRef = useRef<string | null>(null);
+  const demoSayRef = useRef<((msg: string) => void) | null>(null);
   const FEEDBACK_COOLDOWN = 3000;
 
   const { speak, injectContext, isListening, isSpeaking, lastUserSpeech, transcript, isCallReady, addTranscriptEntry } = useVoiceCoach({
@@ -105,32 +110,48 @@ function WorkoutContent() {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(message);
       utterance.rate = 0.95;
-      const pickVoice = () => {
-        const voices = window.speechSynthesis.getVoices();
-        const female = voices.find(v =>
-          /aria|jenny|zira|samantha|google uk english female|karen|moira|tessa|fiona|female/i.test(v.name)
-        );
-        if (female) utterance.voice = female;
+      const sayNow = () => {
+        if (!ttsVoiceRef.current) {
+          const voices = window.speechSynthesis.getVoices();
+          ttsVoiceRef.current = voices.find(v =>
+            /aria|jenny|zira|samantha|google uk english female|karen|moira|tessa|fiona|female/i.test(v.name)
+          ) ?? voices[0] ?? null;
+        }
+        if (ttsVoiceRef.current) utterance.voice = ttsVoiceRef.current;
         window.speechSynthesis.speak(utterance);
       };
       if (window.speechSynthesis.getVoices().length) {
-        pickVoice();
+        sayNow();
       } else {
-        window.speechSynthesis.addEventListener('voiceschanged', pickVoice, { once: true });
+        window.speechSynthesis.addEventListener('voiceschanged', sayNow, { once: true });
       }
     }
   }, [speak, isCallReady, addTranscriptEntry]);
 
+  // Keep ref in sync so onResults can call demoSay without adding it to deps
+  useEffect(() => { demoSayRef.current = demoSay; }, [demoSay]);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      const markDemoKey = () => {
+        demoKeyActiveRef.current = true;
+        if (demoKeyClearTimerRef.current) clearTimeout(demoKeyClearTimerRef.current);
+        demoKeyClearTimerRef.current = setTimeout(() => { demoKeyActiveRef.current = false; }, 2000);
+      };
       if (e.key === 'b' || e.key === 'B') {
+        markDemoKey();
         demoSay("Chest up — you're leaning too far forward, keep your torso more upright.");
+        triggerDemoScore(46);
       } else if (e.key === 'n' || e.key === 'N') {
-        demoSay("You're leaning too far back — shift your weight slightly forward over your midfoot.");
+        markDemoKey();
+        demoSay("You're leaning too far back — keep your feet flat on the floor.");
+        triggerDemoScore(49);
       } else if (e.key === 'l' || e.key === 'L') {
         demoSay("Your front knee is caving inward — push it out so it tracks directly over your second toe.");
       } else if (e.key === 'm' || e.key === 'M') {
-        demoSay("Drop your back knee lower — aim to hover it just above the floor to get the full range of motion.");
+        markDemoKey();
+        demoSay("Hands are down — raise them out in front as a counterbalance.");
+        triggerDemoScore(61);
       } else if (e.key === '1' && exercise?.id === 'bodyweight-squat') {
         demoSay("Sit back more — keep your knees behind your toes.");
         triggerDemoScore(12);
@@ -158,9 +179,17 @@ function WorkoutContent() {
 
       // Run the form analysis for this exercise
       const result = analyzeForm(exercise.id, landmarks, analyzerState);
-      setAnalysisResult(result);
 
-      session.updateFormScore(result.formScore);
+      // EMA smoothing — score drifts toward the raw value slowly (α=0.08)
+      const raw = result.formScore;
+      const smoothed = raw === 0
+        ? 0
+        : Math.round(smoothedScoreRef.current + 0.08 * (raw - smoothedScoreRef.current));
+      smoothedScoreRef.current = smoothed;
+      const displayResult = smoothed !== session.formScore ? { ...result, formScore: smoothed } : result;
+      setAnalysisResult(displayResult);
+
+      if (smoothed !== session.formScore) session.updateFormScore(smoothed);
       session.updatePhase(result.phase);
       session.setFormCorrectness(result.isCorrect);
 
@@ -172,8 +201,8 @@ function WorkoutContent() {
         if (isNew) session.addFeedback(fb);
       });
 
-      // Rep-gated voice — only speak when a rep completes (Rehabify pattern)
-      if (result.repIncremented) {
+      // Rep-gated voice — only speak when a rep completes (skip if a demo key was recently pressed)
+      if (result.repIncremented && !demoKeyActiveRef.current) {
         session.incrementRep();
         result.repSummaryErrors.forEach(msg => {
           session.addFeedback({ type: 'warning', message: msg, timestamp: Date.now() });
@@ -189,27 +218,39 @@ function WorkoutContent() {
           const cooldownOk = now - lastFeedbackTimeRef.current >= FEEDBACK_COOLDOWN;
 
           if (cooldownOk || isMilestone) {
-            let context = '';
-            if (isComplete) {
-              context = `[SESSION END]\nExercise: ${exercise.name}\nReps completed: ${repNum}/${targetReps}\nFinal form score: ${result.formScore}%\nCongratulate them warmly on finishing the set.`;
-            } else if (isHalfway) {
-              context = `[REP COMPLETED]\nExercise: ${exercise.name}\nRep: ${repNum}/${targetReps} (HALFWAY POINT)\nForm score: ${result.formScore}%\n${result.repSummaryErrors.length > 0 ? `Form issues this rep: ${result.repSummaryErrors.join('; ')}` : 'Form was good.'}\nAcknowledge the halfway milestone briefly.`;
-            } else if (result.repSummaryErrors.length > 0) {
-              context = `[FORM FEEDBACK NEEDED]\nExercise: ${exercise.name}\nRep: ${repNum}/${targetReps}\nForm score: ${result.formScore}%\nForm issues this rep: ${result.repSummaryErrors.join('; ')}\nGive ONE brief correction (5-15 words max). Use varied phrasing.`;
+            if (isCallReady.current) {
+              // Vapi connected — inject context so AI coach responds naturally
+              let context = '';
+              if (isComplete) {
+                context = `[SESSION END]\nExercise: ${exercise.name}\nReps completed: ${repNum}/${targetReps}\nFinal form score: ${result.formScore}%\nCongratulate them warmly on finishing the set.`;
+              } else if (isHalfway) {
+                context = `[REP COMPLETED]\nExercise: ${exercise.name}\nRep: ${repNum}/${targetReps} (HALFWAY POINT)\nForm score: ${result.formScore}%\n${result.repSummaryErrors.length > 0 ? `Form issues this rep: ${result.repSummaryErrors.join('; ')}` : 'Form was good.'}\nAcknowledge the halfway milestone briefly.`;
+              } else if (result.repSummaryErrors.length > 0) {
+                context = `[FORM FEEDBACK NEEDED]\nExercise: ${exercise.name}\nRep: ${repNum}/${targetReps}\nForm score: ${result.formScore}%\nForm issues this rep: ${result.repSummaryErrors.join('; ')}\nGive ONE brief correction (5-15 words max). Use varied phrasing.`;
+              } else {
+                context = `[REP COMPLETED]\nExercise: ${exercise.name}\nRep: ${repNum}/${targetReps}\nForm score: ${result.formScore}%\nForm was good. Brief encouragement (3-5 words max). Examples: "Nice!", "Good rep!", "Keep it up!"`;
+              }
+              if (isSpeaking) {
+                pendingContextRef.current = context;
+              } else {
+                injectContext(context);
+                lastFeedbackTimeRef.current = now;
+              }
             } else {
-              context = `[REP COMPLETED]\nExercise: ${exercise.name}\nRep: ${repNum}/${targetReps}\nForm score: ${result.formScore}%\nForm was good. Brief encouragement (3-5 words max). Examples: "Nice!", "Good rep!", "Keep it up!"`;
-            }
-
-            if (isSpeaking) {
-              pendingContextRef.current = context;
-            } else {
-              injectContext(context);
+              // No Vapi — browser TTS milestone encouragement (matches older behaviour)
+              const encouragement =
+                isComplete        ? `${repNum} reps — excellent work today.` :
+                isHalfway         ? `Halfway there — stay controlled.` :
+                repNum % 5 === 0  ? `${repNum} reps — keep it up.` :
+                result.repSummaryErrors.length > 0 ? result.repSummaryErrors[0] :
+                null;
+              if (encouragement) demoSayRef.current?.(encouragement);
               lastFeedbackTimeRef.current = now;
             }
           }
         }
       }
-    }, [exercise, analyzerState, session, audioEnabled, injectContext, isSpeaking]),
+    }, [exercise, analyzerState, session, audioEnabled, injectContext, isSpeaking, isCallReady]),
   });
 
   // Start the session when we load the exercise
@@ -251,15 +292,17 @@ function WorkoutContent() {
     }
   };
 
-  // Auto-start camera, then start Vapi 500ms later once stream is stable
+  // Start camera + voice together when camera is toggled on
   useEffect(() => {
-    if (isCameraActive && isInitialized && !isCameraLoading && exercise?.hasAiDetection && !cameraStartedRef.current) {
+    if (isCameraActive && isInitialized && exercise?.hasAiDetection && !cameraStartedRef.current) {
       cameraStartedRef.current = true;
       startCamera();
-      setTimeout(() => setIsVoiceReady(true), 500);
+      setIsVoiceReady(true);
     }
-    if (!isCameraActive) setIsVoiceReady(false);
-  }, [isCameraActive, isInitialized, isCameraLoading, exercise?.hasAiDetection]);
+    if (!isCameraActive) {
+      setIsVoiceReady(false);
+    }
+  }, [isCameraActive, isInitialized, exercise?.hasAiDetection]);
 
   const handleCompleteSet = () => {
     session.completeSet();
@@ -335,7 +378,7 @@ function WorkoutContent() {
       </header>
 
       <main className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <div className="grid lg:grid-cols-[1fr_3fr_1fr] gap-6 items-start">
+        <div className="grid lg:grid-cols-[1fr_2fr_1fr] gap-6 items-start">
 
           {/* Left column: demo video + instructions */}
           <div className="space-y-4 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 120px)' }}>
@@ -370,7 +413,7 @@ function WorkoutContent() {
           {/* Center column: camera */}
           <div className="space-y-4">
             <Card className="overflow-hidden border-sage-200">
-              <div className="relative bg-slate-900" style={{ height: 'calc(100vh - 220px)' }}>
+              <div className="relative bg-slate-900" style={{ height: 'calc(100vh - 140px)' }}>
                 {exercise.hasAiDetection ? (
                   <>
                     <video
