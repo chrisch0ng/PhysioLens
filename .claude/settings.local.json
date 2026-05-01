@@ -4,7 +4,9 @@
       "Bash(npm run:*)",
       "Bash(npm install:*)",
       "Bash(npx tsc:*)",
-      "Bash(xargs grep *)"
+      "Bash(xargs grep *)",
+      "WebFetch(domain:pmc.ncbi.nlm.nih.gov)",
+      "WebSearch"
     ]
   }
 }
